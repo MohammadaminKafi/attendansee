@@ -1,5 +1,8 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db import transaction
+import csv
+import io
 from .models import Class, Student, Session, Image, FaceCrop
 
 
@@ -238,3 +241,297 @@ class FaceCropDetailSerializer(FaceCropSerializer):
         fields = FaceCropSerializer.Meta.fields + [
             'session_id', 'session_name', 'class_id', 'class_name'
         ]
+
+
+class BulkStudentUploadSerializer(serializers.Serializer):
+    """
+    Serializer for bulk student upload from CSV/Excel files.
+    Validates file format and processes student data.
+    """
+    file = serializers.FileField(required=True)
+    has_header = serializers.BooleanField(default=True, required=False)
+    
+    # File size limit: 5MB
+    MAX_FILE_SIZE = 5 * 1024 * 1024
+    # Maximum number of students per upload
+    MAX_STUDENTS = 1000
+    
+    ALLOWED_EXTENSIONS = ['csv', 'xlsx', 'xls']
+    
+    def validate_file(self, value):
+        """
+        Validate the uploaded file:
+        - Check file size
+        - Check file extension
+        - Validate it's not empty
+        """
+        # Check file size
+        if value.size > self.MAX_FILE_SIZE:
+            raise serializers.ValidationError(
+                f"File size exceeds maximum allowed size of {self.MAX_FILE_SIZE / (1024 * 1024)}MB"
+            )
+        
+        # Check file extension
+        file_extension = value.name.split('.')[-1].lower()
+        if file_extension not in self.ALLOWED_EXTENSIONS:
+            raise serializers.ValidationError(
+                f"File extension '.{file_extension}' not allowed. "
+                f"Allowed extensions: {', '.join(self.ALLOWED_EXTENSIONS)}"
+            )
+        
+        # Check file is not empty
+        if value.size == 0:
+            raise serializers.ValidationError("Uploaded file is empty")
+        
+        return value
+    
+    def parse_csv_file(self, file_obj, has_header):
+        """
+        Parse CSV file and extract student data.
+        Returns a list of dictionaries with student information.
+        """
+        students_data = []
+        
+        try:
+            # Read file content
+            file_content = file_obj.read().decode('utf-8-sig')  # Handle BOM
+            csv_reader = csv.reader(io.StringIO(file_content))
+            
+            rows = list(csv_reader)
+            
+            if not rows:
+                raise serializers.ValidationError("CSV file contains no data")
+            
+            # Skip header if present
+            start_idx = 1 if has_header else 0
+            
+            for idx, row in enumerate(rows[start_idx:], start=start_idx + 1):
+                # Skip empty rows
+                if not row or all(not cell.strip() for cell in row):
+                    continue
+                
+                # Ensure at least 2 columns (first_name, last_name)
+                if len(row) < 2:
+                    raise serializers.ValidationError(
+                        f"Row {idx}: Insufficient columns. Expected at least 2 (first_name, last_name)"
+                    )
+                
+                # Extract student data
+                student_data = {
+                    'first_name': row[0].strip(),
+                    'last_name': row[1].strip(),
+                    'student_id': row[2].strip() if len(row) > 2 else '',
+                }
+                
+                # Validate data
+                if not student_data['first_name'] or not student_data['last_name']:
+                    raise serializers.ValidationError(
+                        f"Row {idx}: First name and last name cannot be empty"
+                    )
+                
+                students_data.append(student_data)
+            
+            if not students_data:
+                raise serializers.ValidationError("No valid student data found in file")
+            
+            if len(students_data) > self.MAX_STUDENTS:
+                raise serializers.ValidationError(
+                    f"Too many students in file. Maximum allowed: {self.MAX_STUDENTS}"
+                )
+            
+        except UnicodeDecodeError:
+            raise serializers.ValidationError(
+                "File encoding error. Please ensure the file is UTF-8 encoded"
+            )
+        except csv.Error as e:
+            raise serializers.ValidationError(f"CSV parsing error: {str(e)}")
+        
+        return students_data
+    
+    def parse_excel_file(self, file_obj, has_header):
+        """
+        Parse Excel file and extract student data.
+        Returns a list of dictionaries with student information.
+        """
+        try:
+            import openpyxl
+        except ImportError:
+            raise serializers.ValidationError(
+                "Excel support not available. Please install openpyxl"
+            )
+        
+        students_data = []
+        
+        try:
+            workbook = openpyxl.load_workbook(file_obj, read_only=True)
+            sheet = workbook.active
+            
+            rows = list(sheet.iter_rows(values_only=True))
+            
+            if not rows:
+                raise serializers.ValidationError("Excel file contains no data")
+            
+            # Skip header if present
+            start_idx = 1 if has_header else 0
+            
+            for idx, row in enumerate(rows[start_idx:], start=start_idx + 1):
+                # Skip empty rows
+                if not row or all(cell is None or str(cell).strip() == '' for cell in row):
+                    continue
+                
+                # Ensure at least 2 columns
+                if len(row) < 2:
+                    raise serializers.ValidationError(
+                        f"Row {idx}: Insufficient columns. Expected at least 2 (first_name, last_name)"
+                    )
+                
+                # Extract student data
+                student_data = {
+                    'first_name': str(row[0]).strip() if row[0] else '',
+                    'last_name': str(row[1]).strip() if row[1] else '',
+                    'student_id': str(row[2]).strip() if len(row) > 2 and row[2] else '',
+                }
+                
+                # Validate data
+                if not student_data['first_name'] or not student_data['last_name']:
+                    raise serializers.ValidationError(
+                        f"Row {idx}: First name and last name cannot be empty"
+                    )
+                
+                students_data.append(student_data)
+            
+            workbook.close()
+            
+            if not students_data:
+                raise serializers.ValidationError("No valid student data found in file")
+            
+            if len(students_data) > self.MAX_STUDENTS:
+                raise serializers.ValidationError(
+                    f"Too many students in file. Maximum allowed: {self.MAX_STUDENTS}"
+                )
+            
+        except openpyxl.utils.exceptions.InvalidFileException:
+            raise serializers.ValidationError("Invalid Excel file format")
+        except Exception as e:
+            raise serializers.ValidationError(f"Excel parsing error: {str(e)}")
+        
+        return students_data
+    
+    def create_students(self, class_obj, students_data):
+        """
+        Create students in bulk for the given class.
+        Returns statistics about created, skipped, and failed students.
+        """
+        created_students = []
+        skipped_students = []
+        
+        with transaction.atomic():
+            for student_data in students_data:
+                # Check if student already exists
+                existing = Student.objects.filter(
+                    class_enrolled=class_obj,
+                    first_name=student_data['first_name'],
+                    last_name=student_data['last_name']
+                ).first()
+                
+                if existing:
+                    skipped_students.append({
+                        'first_name': student_data['first_name'],
+                        'last_name': student_data['last_name'],
+                        'student_id': student_data['student_id'],
+                        'reason': 'Already exists'
+                    })
+                    continue
+                
+                # Create new student
+                student = Student.objects.create(
+                    class_enrolled=class_obj,
+                    first_name=student_data['first_name'],
+                    last_name=student_data['last_name'],
+                    student_id=student_data['student_id']
+                )
+                created_students.append(student)
+        
+        return {
+            'created': created_students,
+            'skipped': skipped_students,
+            'total_created': len(created_students),
+            'total_skipped': len(skipped_students)
+        }
+
+
+class ProcessImageSerializer(serializers.Serializer):
+    """
+    Serializer for triggering image processing.
+    This endpoint will process an image to extract face crops.
+    """
+    # Optional parameters for processing configuration
+    min_face_size = serializers.IntegerField(
+        default=20,
+        min_value=10,
+        max_value=500,
+        required=False,
+        help_text="Minimum face size in pixels"
+    )
+    confidence_threshold = serializers.FloatField(
+        default=0.5,
+        min_value=0.0,
+        max_value=1.0,
+        required=False,
+        help_text="Confidence threshold for face detection"
+    )
+
+
+class AggregateCropsSerializer(serializers.Serializer):
+    """
+    Serializer for aggregating face crops from session images into students.
+    This endpoint will match unidentified crops to students in the class.
+    """
+    # Optional parameters for aggregation configuration
+    similarity_threshold = serializers.FloatField(
+        default=0.7,
+        min_value=0.0,
+        max_value=1.0,
+        required=False,
+        help_text="Similarity threshold for matching faces to students"
+    )
+    auto_assign = serializers.BooleanField(
+        default=False,
+        required=False,
+        help_text="Automatically assign high-confidence matches"
+    )
+
+
+class AggregateClassSerializer(serializers.Serializer):
+    """
+    Serializer for aggregating attendance across all sessions in a class.
+    This endpoint will provide unified class-wide statistics.
+    """
+    # Optional parameters for class aggregation
+    include_unprocessed = serializers.BooleanField(
+        default=False,
+        required=False,
+        help_text="Include unprocessed sessions in aggregation"
+    )
+    date_from = serializers.DateField(
+        required=False,
+        help_text="Start date for aggregation (YYYY-MM-DD)"
+    )
+    date_to = serializers.DateField(
+        required=False,
+        help_text="End date for aggregation (YYYY-MM-DD)"
+    )
+    
+    def validate(self, data):
+        """
+        Validate date range if both dates are provided.
+        """
+        date_from = data.get('date_from')
+        date_to = data.get('date_to')
+        
+        if date_from and date_to and date_from > date_to:
+            raise serializers.ValidationError(
+                "date_from must be before or equal to date_to"
+            )
+        
+        return data

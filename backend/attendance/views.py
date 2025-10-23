@@ -2,11 +2,15 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.db.models import Count, Q
+from django.utils import timezone
 from .models import Class, Student, Session, Image, FaceCrop
 from .serializers import (
     ClassSerializer, StudentSerializer, SessionSerializer,
-    ImageSerializer, FaceCropSerializer, FaceCropDetailSerializer
+    ImageSerializer, FaceCropSerializer, FaceCropDetailSerializer,
+    BulkStudentUploadSerializer, ProcessImageSerializer,
+    AggregateCropsSerializer, AggregateClassSerializer
 )
 from .permissions import IsOwnerOrAdmin, IsClassOwnerOrAdmin
 
@@ -82,6 +86,166 @@ class ClassViewSet(viewsets.ModelViewSet):
         }
         
         return Response(stats)
+    
+    @action(
+        detail=True,
+        methods=['post'],
+        parser_classes=[MultiPartParser, FormParser],
+        url_path='bulk-upload-students'
+    )
+    def bulk_upload_students(self, request, pk=None):
+        """
+        Bulk upload students from CSV or Excel file.
+        
+        Expected file format:
+        - CSV or Excel file (.csv, .xlsx, .xls)
+        - Columns: first_name, last_name, student_id (optional)
+        - File can have header row or not (specify with has_header parameter)
+        
+        Parameters:
+        - file: The CSV/Excel file
+        - has_header: Boolean indicating if file has header row (default: true)
+        
+        Returns:
+        - created: List of created students
+        - total_created: Number of students created
+        - total_skipped: Number of students skipped (duplicates)
+        - skipped: List of skipped students with reasons
+        """
+        class_obj = self.get_object()
+        
+        serializer = BulkStudentUploadSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        file = serializer.validated_data['file']
+        has_header = serializer.validated_data.get('has_header', True)
+        
+        # Determine file type and parse accordingly
+        file_extension = file.name.split('.')[-1].lower()
+        
+        try:
+            if file_extension == 'csv':
+                students_data = serializer.parse_csv_file(file, has_header)
+            elif file_extension in ['xlsx', 'xls']:
+                students_data = serializer.parse_excel_file(file, has_header)
+            else:
+                return Response(
+                    {'error': 'Unsupported file format'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create students
+        result = serializer.create_students(class_obj, students_data)
+        
+        # Serialize created students
+        created_students_data = StudentSerializer(
+            result['created'],
+            many=True
+        ).data
+        
+        return Response({
+            'created': created_students_data,
+            'total_created': result['total_created'],
+            'total_skipped': result['total_skipped'],
+            'skipped': result['skipped'],
+            'message': f"Successfully created {result['total_created']} students. "
+                      f"Skipped {result['total_skipped']} duplicates."
+        }, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['post'], url_path='aggregate-class')
+    def aggregate_class(self, request, pk=None):
+        """
+        Aggregate attendance data across all sessions in the class.
+        
+        This endpoint provides unified statistics and attendance patterns
+        across all sessions in the class. The actual aggregation logic
+        will be implemented later using the core face recognition module.
+        
+        Parameters (optional):
+        - include_unprocessed: Include unprocessed sessions (default: false)
+        - date_from: Start date for aggregation (YYYY-MM-DD)
+        - date_to: End date for aggregation (YYYY-MM-DD)
+        
+        Returns:
+        - Aggregated attendance statistics
+        - Per-student attendance summary
+        - Session-wise breakdown
+        """
+        class_obj = self.get_object()
+        
+        serializer = AggregateClassSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        include_unprocessed = serializer.validated_data.get('include_unprocessed', False)
+        date_from = serializer.validated_data.get('date_from')
+        date_to = serializer.validated_data.get('date_to')
+        
+        # Filter sessions based on parameters
+        sessions_query = Session.objects.filter(class_session=class_obj)
+        
+        if not include_unprocessed:
+            sessions_query = sessions_query.filter(is_processed=True)
+        
+        if date_from:
+            sessions_query = sessions_query.filter(date__gte=date_from)
+        
+        if date_to:
+            sessions_query = sessions_query.filter(date__lte=date_to)
+        
+        sessions = sessions_query.order_by('date')
+        
+        # TODO: Implement actual aggregation logic here
+        # This is a stub implementation that will be completed later
+        # The actual implementation will:
+        # 1. Load face embeddings from all sessions
+        # 2. Perform cross-session face matching
+        # 3. Generate unified attendance records
+        # 4. Calculate attendance patterns and statistics
+        
+        # For now, return basic statistics
+        all_students = class_obj.students.all()
+        student_stats = []
+        
+        for student in all_students:
+            attended_sessions = sessions.filter(
+                images__face_crops__student=student
+            ).distinct().count()
+            
+            student_stats.append({
+                'student_id': student.id,
+                'name': student.full_name,
+                'student_number': student.student_id,
+                'total_sessions': sessions.count(),
+                'attended_sessions': attended_sessions,
+                'attendance_rate': round(
+                    (attended_sessions / sessions.count() * 100) if sessions.count() > 0 else 0,
+                    2
+                ),
+                'total_detections': student.face_crops.filter(
+                    image__session__in=sessions
+                ).count()
+            })
+        
+        return Response({
+            'class_id': class_obj.id,
+            'class_name': class_obj.name,
+            'total_sessions': sessions.count(),
+            'total_students': all_students.count(),
+            'date_range': {
+                'from': sessions.first().date if sessions.exists() else None,
+                'to': sessions.last().date if sessions.exists() else None
+            },
+            'student_statistics': student_stats,
+            'message': 'Class aggregation completed successfully. '
+                      'Note: Full aggregation logic will be implemented with core face recognition module.'
+        })
 
 
 class StudentViewSet(viewsets.ModelViewSet):
@@ -234,6 +398,96 @@ class SessionViewSet(viewsets.ModelViewSet):
             'absent_count': all_students.count() - len(present_ids),
             'attendance': attendance_data
         })
+    
+    @action(detail=True, methods=['post'], url_path='aggregate-crops')
+    def aggregate_crops(self, request, pk=None):
+        """
+        Aggregate face crops from all images in the session.
+        
+        This endpoint processes all face crops from the session's images
+        and attempts to match them with students in the class. The actual
+        matching logic will be implemented later using the core face
+        recognition module.
+        
+        Parameters (optional):
+        - similarity_threshold: Threshold for face matching (default: 0.7)
+        - auto_assign: Automatically assign high-confidence matches (default: false)
+        
+        Returns:
+        - Aggregation statistics
+        - Identified students
+        - Unidentified crops count
+        """
+        session_obj = self.get_object()
+        
+        # Check if session has any images
+        if not session_obj.images.exists():
+            return Response(
+                {
+                    'error': 'Session has no images',
+                    'session_id': session_obj.id
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if images are processed
+        unprocessed_images = session_obj.images.filter(is_processed=False).count()
+        if unprocessed_images > 0:
+            return Response(
+                {
+                    'warning': f'{unprocessed_images} images in session are not yet processed',
+                    'session_id': session_obj.id,
+                    'total_images': session_obj.images.count(),
+                    'processed_images': session_obj.images.filter(is_processed=True).count()
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = AggregateCropsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        similarity_threshold = serializer.validated_data.get('similarity_threshold', 0.7)
+        auto_assign = serializer.validated_data.get('auto_assign', False)
+        
+        # Get all face crops from session
+        all_crops = FaceCrop.objects.filter(image__session=session_obj)
+        unidentified_crops = all_crops.filter(is_identified=False)
+        
+        # TODO: Implement actual crop aggregation logic here
+        # This is a stub implementation that will be completed later
+        # The actual implementation will:
+        # 1. Load face embeddings from all crops in the session
+        # 2. Cluster similar faces together
+        # 3. Match clusters with known students in the class
+        # 4. Assign crops to students based on similarity threshold
+        # 5. Update FaceCrop records with student assignments
+        
+        # For now, return statistics without creating any assignments
+        identified_students = Student.objects.filter(
+            face_crops__image__session=session_obj
+        ).distinct()
+        
+        return Response({
+            'status': 'aggregation_completed',
+            'session_id': session_obj.id,
+            'session_name': session_obj.name,
+            'class_id': session_obj.class_session.id,
+            'parameters': {
+                'similarity_threshold': similarity_threshold,
+                'auto_assign': auto_assign
+            },
+            'statistics': {
+                'total_images': session_obj.images.count(),
+                'total_crops': all_crops.count(),
+                'identified_crops': all_crops.filter(is_identified=True).count(),
+                'unidentified_crops': unidentified_crops.count(),
+                'identified_students': identified_students.count(),
+                'total_students_in_class': session_obj.class_session.students.count()
+            },
+            'message': 'Crop aggregation completed successfully. '
+                      'Note: Full aggregation logic will be implemented with core face recognition module.'
+        }, status=status.HTTP_200_OK)
 
 
 class ImageViewSet(viewsets.ModelViewSet):
@@ -306,6 +560,70 @@ class ImageViewSet(viewsets.ModelViewSet):
         image.mark_as_processed(processed_path)
         serializer = self.get_serializer(image)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'], url_path='process-image')
+    def process_image(self, request, pk=None):
+        """
+        Process an image to extract face crops.
+        
+        This endpoint triggers the face detection and extraction process
+        on the uploaded image. The actual processing logic will be
+        implemented later using the core face recognition module.
+        
+        Parameters (optional):
+        - min_face_size: Minimum face size in pixels (default: 20)
+        - confidence_threshold: Confidence threshold for detection (default: 0.5)
+        
+        Returns:
+        - Processing status
+        - Number of faces detected
+        - List of created face crops
+        """
+        image_obj = self.get_object()
+        
+        # Check if image is already processed
+        if image_obj.is_processed:
+            return Response(
+                {
+                    'error': 'Image has already been processed',
+                    'image_id': image_obj.id,
+                    'processed_date': image_obj.processing_date
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = ProcessImageSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        min_face_size = serializer.validated_data.get('min_face_size', 20)
+        confidence_threshold = serializer.validated_data.get('confidence_threshold', 0.5)
+        
+        # TODO: Implement actual face detection and extraction here
+        # This is a stub implementation that will be completed later
+        # The actual implementation will:
+        # 1. Load the image from original_image_path
+        # 2. Run face detection using the core face module
+        # 3. Extract face crops for each detected face
+        # 4. Save crops to disk
+        # 5. Create FaceCrop objects with coordinates and paths
+        # 6. Mark image as processed
+        
+        # For now, return a stub response
+        return Response({
+            'status': 'processing_queued',
+            'image_id': image_obj.id,
+            'session_id': image_obj.session.id,
+            'class_id': image_obj.session.class_session.id,
+            'parameters': {
+                'min_face_size': min_face_size,
+                'confidence_threshold': confidence_threshold
+            },
+            'faces_detected': 0,
+            'crops_created': [],
+            'message': 'Image processing initiated. '
+                      'Note: Full processing logic will be implemented with core face recognition module.'
+        }, status=status.HTTP_202_ACCEPTED)
 
 
 class FaceCropViewSet(viewsets.ModelViewSet):
