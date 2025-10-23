@@ -2,6 +2,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 from datetime import date, time
 from attendance.models import Class, Student, Session, Image, FaceCrop
 
@@ -69,8 +70,10 @@ class TestClassModel:
     
     def test_class_name_validation(self, user):
         """Test that class name cannot be empty."""
-        with pytest.raises(Exception):
-            Class.objects.create(owner=user, name='')
+        
+        test_class = Class(owner=user, name='')
+        with pytest.raises(ValidationError):
+            test_class.full_clean()
 
 
 @pytest.mark.django_db
@@ -167,6 +170,28 @@ class TestStudentModel:
         students = Student.objects.filter(class_enrolled=test_class)
         assert students[0] == student_a
         assert students[1] == student_z
+    
+    def test_student_name_validation(self, test_class):
+        """Test that student first_name and last_name cannot be empty."""
+        from django.core.exceptions import ValidationError
+        
+        # Test empty first_name
+        student1 = Student(
+            class_enrolled=test_class,
+            first_name='',
+            last_name='Doe'
+        )
+        with pytest.raises(ValidationError):
+            student1.full_clean()
+        
+        # Test empty last_name
+        student2 = Student(
+            class_enrolled=test_class,
+            first_name='John',
+            last_name=''
+        )
+        with pytest.raises(ValidationError):
+            student2.full_clean()
 
 
 @pytest.mark.django_db
@@ -257,6 +282,18 @@ class TestSessionModel:
         
         session1.update_processing_status()
         assert session1.is_processed is True
+    
+    def test_session_name_validation(self, test_class):
+        """Test that session name cannot be empty."""
+        from django.core.exceptions import ValidationError
+        
+        session = Session(
+            class_session=test_class,
+            name='',
+            date=date.today()
+        )
+        with pytest.raises(ValidationError):
+            session.full_clean()
 
 
 @pytest.mark.django_db
