@@ -2,10 +2,17 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import date, time
+from rest_framework.test import APIClient
 from attendance.models import Class, Student, Session, Image, FaceCrop
 
 
 User = get_user_model()
+
+
+@pytest.fixture
+def api_client():
+    """Fixture to provide an API client for tests."""
+    return APIClient()
 
 
 @pytest.fixture
@@ -30,6 +37,41 @@ def another_user(db):
         first_name='Jane',
         last_name='Smith'
     )
+
+
+@pytest.fixture
+def admin_user(db):
+    """Fixture to create an admin user."""
+    return User.objects.create_user(
+        username='admin',
+        email='admin@example.com',
+        password='adminpass123',
+        first_name='Admin',
+        last_name='User',
+        is_staff=True,
+        is_superuser=True
+    )
+
+
+@pytest.fixture
+def authenticated_client(api_client, user):
+    """Fixture to provide an authenticated API client."""
+    api_client.force_authenticate(user=user)
+    return api_client
+
+
+@pytest.fixture
+def another_authenticated_client(api_client, another_user):
+    """Fixture to provide an authenticated API client for another user."""
+    api_client.force_authenticate(user=another_user)
+    return api_client
+
+
+@pytest.fixture
+def admin_authenticated_client(api_client, admin_user):
+    """Fixture to provide an admin authenticated API client."""
+    api_client.force_authenticate(user=admin_user)
+    return api_client
 
 
 @pytest.fixture
