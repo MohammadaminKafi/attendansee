@@ -509,8 +509,8 @@ class SessionAdmin(admin.ModelAdmin):
         percentage = (processed / total) * 100
         color = 'green' if percentage == 100 else 'orange' if percentage > 0 else 'red'
         return format_html(
-            '<span style="color: {};">{}/{} ({:.0f}%)</span>',
-            color, processed, total, percentage
+            '<span style="color: {};">{}/{} ({}%)</span>',
+            color, processed, total, int(percentage)
         )
     progress_display.short_description = 'Progress'
     
@@ -625,10 +625,12 @@ class ImageAdmin(admin.ModelAdmin):
     
     def original_path_display(self, obj):
         """Display truncated original path."""
-        path = obj.original_image_path
-        if len(path) > 50:
-            return f"...{path[-47:]}"
-        return path
+        if obj.original_image_path:
+            path = obj.original_image_path.name
+            if len(path) > 50:
+                return f"...{path[-47:]}"
+            return path
+        return '-'
     original_path_display.short_description = 'Original Path'
     
     def is_processed_display(self, obj):
@@ -784,7 +786,8 @@ class FaceCropAdmin(admin.ModelAdmin):
                 color = 'orange'
             else:
                 color = 'red'
-            return format_html('<span style="color: {};">{:.2%}</span>', color, score)
+            percentage_str = f"{score * 100:.2f}%"
+            return format_html('<span style="color: {};">{}</span>', color, percentage_str)
         return '-'
     confidence_display.short_description = 'Confidence'
     confidence_display.admin_order_field = 'confidence_score'
@@ -801,7 +804,9 @@ class FaceCropAdmin(admin.ModelAdmin):
         """Display image preview if path is accessible."""
         # This would need to be implemented based on your file storage setup
         # For now, just return the path
-        return obj.crop_image_path
+        if obj.crop_image_path:
+            return obj.crop_image_path.name
+        return '-'
     crop_preview.short_description = 'Crop Preview'
     
     def created_at_display(self, obj):

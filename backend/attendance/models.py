@@ -130,8 +130,8 @@ class Image(models.Model):
         on_delete=models.CASCADE,
         related_name='images'
     )
-    original_image_path = models.CharField(max_length=500)
-    processed_image_path = models.CharField(max_length=500, blank=True, default='')
+    original_image_path = models.ImageField(upload_to='session_images/', max_length=500)
+    processed_image_path = models.ImageField(upload_to='processed_images/', max_length=500, blank=True, null=True)
     upload_date = models.DateTimeField(default=timezone.now)
     is_processed = models.BooleanField(default=False)
     processing_date = models.DateTimeField(null=True, blank=True)
@@ -155,6 +155,9 @@ class Image(models.Model):
         """
         Marks the image as processed and updates the processed image path.
         Also updates the parent session's processing status.
+        
+        Args:
+            processed_path: Can be either a file path string or a File object
         """
         self.is_processed = True
         self.processed_image_path = processed_path
@@ -182,7 +185,7 @@ class FaceCrop(models.Model):
         blank=True,
         related_name='face_crops'
     )
-    crop_image_path = models.CharField(max_length=500)
+    crop_image_path = models.ImageField(upload_to='face_crops/', max_length=500)
     coordinates = models.CharField(
         max_length=255,
         help_text='Face coordinates in format: x,y,width,height'

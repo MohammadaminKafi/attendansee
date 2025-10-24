@@ -141,6 +141,7 @@ cython_debug/
 
 # Images and media
 img/
+media/
 
 # System files
 .DS_Store

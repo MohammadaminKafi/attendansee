@@ -567,8 +567,7 @@ class ImageViewSet(viewsets.ModelViewSet):
         Process an image to extract face crops.
         
         This endpoint triggers the face detection and extraction process
-        on the uploaded image. The actual processing logic will be
-        implemented later using the core face recognition module.
+        on the uploaded image using the core face recognition module.
         
         Parameters (optional):
         - min_face_size: Minimum face size in pixels (default: 20)
@@ -579,6 +578,8 @@ class ImageViewSet(viewsets.ModelViewSet):
         - Number of faces detected
         - List of created face crops
         """
+        from attendance.utils import process_image_with_face_detection
+        
         image_obj = self.get_object()
         
         # Check if image is already processed
@@ -599,31 +600,38 @@ class ImageViewSet(viewsets.ModelViewSet):
         min_face_size = serializer.validated_data.get('min_face_size', 20)
         confidence_threshold = serializer.validated_data.get('confidence_threshold', 0.5)
         
-        # TODO: Implement actual face detection and extraction here
-        # This is a stub implementation that will be completed later
-        # The actual implementation will:
-        # 1. Load the image from original_image_path
-        # 2. Run face detection using the core face module
-        # 3. Extract face crops for each detected face
-        # 4. Save crops to disk
-        # 5. Create FaceCrop objects with coordinates and paths
-        # 6. Mark image as processed
+        try:
+            # Process the image and extract face crops
+            result = process_image_with_face_detection(
+                image_obj=image_obj,
+                min_face_size=min_face_size,
+                confidence_threshold=confidence_threshold
+            )
+            
+            return Response({
+                'status': 'completed',
+                'image_id': image_obj.id,
+                'session_id': image_obj.session.id,
+                'class_id': image_obj.session.class_session.id,
+                'faces_detected': result['faces_detected'],
+                'crops_created': result['crops_created'],
+                'processed_image_url': result['processed_image_url'],
+                'message': 'Image processed successfully'
+            })
         
-        # For now, return a stub response
-        return Response({
-            'status': 'processing_queued',
-            'image_id': image_obj.id,
-            'session_id': image_obj.session.id,
-            'class_id': image_obj.session.class_session.id,
-            'parameters': {
-                'min_face_size': min_face_size,
-                'confidence_threshold': confidence_threshold
-            },
-            'faces_detected': 0,
-            'crops_created': [],
-            'message': 'Image processing initiated. '
-                      'Note: Full processing logic will be implemented with core face recognition module.'
-        }, status=status.HTTP_202_ACCEPTED)
+        except FileNotFoundError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Failed to process image',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class FaceCropViewSet(viewsets.ModelViewSet):
