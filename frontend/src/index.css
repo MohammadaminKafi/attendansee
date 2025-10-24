@@ -11,9 +11,10 @@
 @layer components {
   .input-field {
     @apply w-full px-4 py-2 bg-dark-card border border-dark-border rounded-lg 
-           text-gray-100 placeholder-gray-400 
+           text-gray-100 placeholder-gray-500 
            focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent
-           transition-all duration-200;
+           transition-all duration-200
+           hover:border-dark-light;
   }
 
   .btn {
@@ -24,28 +25,31 @@
 
   .btn-primary {
     @apply btn bg-primary text-white hover:bg-primary-hover
-           focus:ring-primary;
+           focus:ring-primary shadow-lg shadow-primary/20
+           hover:shadow-primary/30;
   }
 
   .btn-secondary {
     @apply btn bg-dark-card text-gray-100 border border-dark-border
-           hover:bg-dark-hover focus:ring-dark-border;
+           hover:bg-dark-hover hover:border-dark-light focus:ring-primary/50;
   }
 
   .btn-danger {
-    @apply btn bg-danger text-white hover:bg-red-600
-           focus:ring-danger;
+    @apply btn bg-danger text-white hover:bg-danger-dark
+           focus:ring-danger shadow-lg shadow-danger/20
+           hover:shadow-danger/30;
   }
 
   .card {
-    @apply bg-dark-card border border-dark-border rounded-lg shadow-lg;
+    @apply bg-dark-card border border-dark-border rounded-lg shadow-xl;
   }
 
   .modal-overlay {
-    @apply fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50;
+    @apply fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50
+           backdrop-blur-sm;
   }
 
   .modal-content {
-    @apply bg-dark-card rounded-lg shadow-xl max-w-md w-full p-6;
+    @apply bg-dark-card rounded-lg shadow-2xl max-w-md w-full p-6 border border-dark-border;
   }
 }

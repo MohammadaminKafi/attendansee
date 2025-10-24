@@ -8,7 +8,6 @@ import { Tabs, Tab } from '@/components/ui/Tabs';
 import { StatCard } from '@/components/ui/StatCard';
 import { SessionsTab } from '@/components/tabs/SessionsTab';
 import { StudentsTab } from '@/components/tabs/StudentsTab';
-import { Button } from '@/components/ui/Button';
 import { ArrowLeft } from 'lucide-react';
 
 export const ClassDetailPage: React.FC = () => {
@@ -66,11 +65,11 @@ export const ClassDetailPage: React.FC = () => {
     return (
       <div className="p-8">
         <div className="max-w-md mx-auto text-center">
-          <h2 className="text-2xl font-bold text-red-400 mb-4">Error</h2>
-          <p className="text-slate-300 mb-4">{error || 'Class not found'}</p>
+          <h2 className="text-2xl font-bold text-danger mb-4">Error</h2>
+          <p className="text-gray-300 mb-4">{error || 'Class not found'}</p>
           <button
             onClick={() => navigate('/classes')}
-            className="text-blue-400 hover:text-blue-300"
+            className="text-primary hover:text-primary-light transition-colors"
           >
             ← Back to Classes
           </button>
@@ -80,18 +79,16 @@ export const ClassDetailPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 p-8">
+    <div className="min-h-screen bg-dark-bg p-8">
       <div className="max-w-7xl mx-auto">
         {/* Back Button */}
-        <Button
-          variant="secondary"
-          size="sm"
+        <button
           onClick={() => navigate('/classes')}
-          className="mb-4"
+          className="group flex items-center gap-2 text-gray-400 hover:text-primary transition-colors mb-6"
         >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Classes
-        </Button>
+          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+          <span className="text-sm font-medium">Back to Classes</span>
+        </button>
 
         {/* Breadcrumb */}
         <Breadcrumb
@@ -104,9 +101,9 @@ export const ClassDetailPage: React.FC = () => {
 
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-slate-100 mb-2">{classData.name}</h1>
+          <h1 className="text-3xl font-bold text-gray-100 mb-2">{classData.name}</h1>
           {classData.description && (
-            <p className="text-slate-400">{classData.description}</p>
+            <p className="text-gray-400">{classData.description}</p>
           )}
         </div>
 
@@ -117,13 +114,13 @@ export const ClassDetailPage: React.FC = () => {
               label="Total Students"
               value={statistics.student_count}
               icon="👥"
-              iconColor="text-blue-500"
+              iconColor="text-primary"
             />
             <StatCard
               label="Total Sessions"
               value={statistics.session_count}
               icon="📅"
-              iconColor="text-green-500"
+              iconColor="text-success"
             />
             <StatCard
               label="Total Images"
@@ -135,7 +132,7 @@ export const ClassDetailPage: React.FC = () => {
               label="Identified Faces"
               value={`${statistics.identified_faces} / ${statistics.total_face_crops}`}
               icon="🔍"
-              iconColor="text-yellow-500"
+              iconColor="text-warning"
             />
           </div>
         )}

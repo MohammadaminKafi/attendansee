@@ -26,7 +26,7 @@ export function Table<T>({
 }: TableProps<T>) {
   if (data.length === 0) {
     return (
-      <div className="text-center py-12 text-slate-400">
+      <div className="text-center py-12 text-gray-400">
         <p>{emptyMessage}</p>
       </div>
     );
@@ -34,14 +34,14 @@ export function Table<T>({
 
   return (
     <div className={`overflow-x-auto ${className}`}>
-      <table className="min-w-full divide-y divide-slate-700">
-        <thead className="bg-slate-800">
+      <table className="min-w-full divide-y divide-dark-border">
+        <thead className="bg-dark-card">
           <tr>
             {columns.map((column) => (
               <th
                 key={column.key}
                 scope="col"
-                className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider"
+                className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider"
                 style={{ width: column.width }}
               >
                 {column.header}
@@ -49,15 +49,15 @@ export function Table<T>({
             ))}
           </tr>
         </thead>
-        <tbody className="bg-slate-900 divide-y divide-slate-700">
+        <tbody className="bg-dark-bg divide-y divide-dark-border">
           {data.map((item) => (
             <tr 
               key={keyExtractor(item)} 
-              className={`hover:bg-slate-800 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
+              className={`hover:bg-dark-hover transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
               onClick={() => onRowClick?.(item)}
             >
               {columns.map((column) => (
-                <td key={column.key} className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
+                <td key={column.key} className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                   {column.render ? column.render(item) : (item as any)[column.key]}
                 </td>
               ))}

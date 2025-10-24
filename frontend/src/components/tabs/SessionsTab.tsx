@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Edit2, Trash2 } from 'lucide-react';
 import { sessionsAPI } from '@/services/api';
 import { Session, CreateSessionData, UpdateSessionData } from '@/types';
 import { Table, Column } from '@/components/ui/Table';
@@ -25,7 +26,9 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | null>(null);
+  const [deletingSession, setDeletingSession] = useState<Session | null>(null);
   const [formData, setFormData] = useState<CreateSessionData>({
     name: '',
     date: '',
@@ -34,6 +37,8 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
     notes: '',
     class_session: classId,
   });
+  const [formError, setFormError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     loadSessions();
@@ -103,18 +108,29 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
     setShowModal(true);
   };
 
-  const handleDelete = async (session: Session) => {
-    if (!confirm(`Are you sure you want to delete session "${session.name}"?`)) {
-      return;
-    }
+  const openDeleteModal = (session: Session) => {
+    setDeletingSession(session);
+    setFormError('');
+    setShowDeleteModal(true);
+  };
+
+  const handleDelete = async () => {
+    if (!deletingSession) return;
+
+    setIsSubmitting(true);
+    setFormError('');
 
     try {
-      await sessionsAPI.deleteSession(session.id);
+      await sessionsAPI.deleteSession(deletingSession.id);
+      setShowDeleteModal(false);
+      setDeletingSession(null);
       await loadSessions();
       onUpdate?.();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to delete session:', error);
-      alert('Failed to delete session');
+      setFormError(error.response?.data?.detail || 'Failed to delete session');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -151,7 +167,34 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
     {
       key: 'name',
       header: 'Name',
-      width: '25%',
+      width: '35%',
+      render: (session) => (
+        <div className="flex items-center justify-between group">
+          <span>{session.name}</span>
+          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEdit(session);
+              }}
+              className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-primary transition-colors"
+              title="Edit session"
+            >
+              <Edit2 size={16} />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                openDeleteModal(session);
+              }}
+              className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-danger transition-colors"
+              title="Delete session"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+      ),
     },
     {
       key: 'image_count',
@@ -173,21 +216,6 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
         <Badge variant={session.is_processed ? 'success' : 'warning'}>
           {session.is_processed ? 'Processed' : 'Pending'}
         </Badge>
-      ),
-    },
-    {
-      key: 'actions',
-      header: 'Actions',
-      width: '25%',
-      render: (session) => (
-        <div className="flex gap-2">
-          <Button size="sm" variant="secondary" onClick={() => handleEdit(session)}>
-            Edit
-          </Button>
-          <Button size="sm" variant="danger" onClick={() => handleDelete(session)}>
-            Delete
-          </Button>
-        </div>
       ),
     },
   ];
@@ -216,7 +244,7 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
       </div>
 
       {/* Table */}
-      <div className="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+      <div className="bg-dark-card rounded-lg border border-dark-border overflow-hidden">
         <Table
           data={paginatedSessions}
           columns={columns}
@@ -271,11 +299,11 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
+            <label className="block text-sm font-medium text-gray-300 mb-2">
               Notes (Optional)
             </label>
             <textarea
-              className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-dark-card border border-dark-border rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary"
               rows={3}
               value={formData.notes}
               onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -289,6 +317,57 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
             <Button type="submit">Update</Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Delete Modal */}
+      <Modal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        title="Delete Session"
+      >
+        <div className="space-y-4">
+          {formError && (
+            <div className="p-3 bg-danger bg-opacity-10 border border-danger rounded-lg">
+              <p className="text-danger text-sm">{formError}</p>
+            </div>
+          )}
+
+          <p className="text-gray-300">
+            Are you sure you want to delete the session{' '}
+            <span className="font-semibold text-gray-100">
+              {deletingSession?.name}
+            </span>
+            ?
+          </p>
+
+          <div className="p-3 bg-warning bg-opacity-10 border border-warning rounded-lg">
+            <p className="text-warning text-sm">
+              This action cannot be undone. All images and attendance data
+              associated with this session will be permanently deleted.
+            </p>
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowDeleteModal(false)}
+              className="flex-1"
+              disabled={isSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={handleDelete}
+              className="flex-1"
+              isLoading={isSubmitting}
+            >
+              Delete Session
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

@@ -38,7 +38,7 @@ export const Pagination: React.FC<PaginationProps> = ({
 
   return (
     <div className={`flex items-center justify-between ${className}`}>
-      <div className="text-sm text-slate-400">
+      <div className="text-sm text-gray-400">
         Page {currentPage} of {totalPages}
       </div>
       
@@ -60,7 +60,7 @@ export const Pagination: React.FC<PaginationProps> = ({
             return (
               <React.Fragment key={page}>
                 {showEllipsisBefore && (
-                  <span className="px-2 text-slate-500">...</span>
+                  <span className="px-2 text-gray-500">...</span>
                 )}
                 <button
                   onClick={() => onPageChange(page)}
@@ -68,8 +68,8 @@ export const Pagination: React.FC<PaginationProps> = ({
                     px-3 py-1 rounded text-sm font-medium transition-colors
                     ${
                       page === currentPage
-                        ? 'bg-blue-600 text-white'
-                        : 'text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+                        ? 'bg-primary text-white'
+                        : 'text-gray-400 hover:bg-dark-hover hover:text-gray-200'
                     }
                   `}
                 >

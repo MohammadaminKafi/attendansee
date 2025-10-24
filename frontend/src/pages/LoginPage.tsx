@@ -32,8 +32,13 @@ export const LoginPage: React.FC = () => {
     try {
       await login({ username, password });
       navigate('/classes');
-    } catch (err) {
-      setError(getErrorMessage(err));
+    } catch (err: any) {
+      // Check if it's a 401 error (authentication failure)
+      if (err.response?.status === 401) {
+        setError('Invalid username or password. Please try again.');
+      } else {
+        setError(getErrorMessage(err));
+      }
     } finally {
       setIsLoading(false);
     }

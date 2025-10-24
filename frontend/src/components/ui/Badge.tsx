@@ -7,11 +7,11 @@ interface BadgeProps {
 }
 
 const variantStyles = {
-  success: 'bg-green-900/30 text-green-400 ring-green-500/30',
-  warning: 'bg-yellow-900/30 text-yellow-400 ring-yellow-500/30',
-  error: 'bg-red-900/30 text-red-400 ring-red-500/30',
-  info: 'bg-blue-900/30 text-blue-400 ring-blue-500/30',
-  default: 'bg-slate-700/50 text-slate-300 ring-slate-600/30',
+  success: 'bg-success/20 text-success-light ring-success/40 shadow-success/10',
+  warning: 'bg-warning/20 text-warning-light ring-warning/40 shadow-warning/10',
+  error: 'bg-danger/20 text-danger-light ring-danger/40 shadow-danger/10',
+  info: 'bg-primary/20 text-primary-light ring-primary/40 shadow-primary/10',
+  default: 'bg-dark-light/30 text-gray-300 ring-dark-border shadow-dark-light/10',
 };
 
 export const Badge: React.FC<BadgeProps> = ({ 
@@ -23,7 +23,7 @@ export const Badge: React.FC<BadgeProps> = ({
     <span
       className={`
         inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
-        ring-1 ring-inset
+        ring-1 ring-inset shadow-sm
         ${variantStyles[variant]}
         ${className}
       `}

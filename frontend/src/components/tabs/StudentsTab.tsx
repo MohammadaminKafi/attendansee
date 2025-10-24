@@ -188,21 +188,21 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
       {/* Student List */}
       <div className="grid gap-4">
         {filteredStudents.length === 0 ? (
-          <div className="text-center py-12 text-slate-400">
+          <div className="text-center py-12 text-gray-400">
             <p>No students found</p>
           </div>
         ) : (
           filteredStudents.map((student) => (
             <div
               key={student.id}
-              className="bg-slate-800 border border-slate-700 rounded-lg p-4 hover:bg-slate-750 transition-colors"
+              className="bg-dark-card border border-dark-border rounded-lg p-4 hover:border-primary transition-colors"
             >
               <div className="flex items-center justify-between">
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-slate-100">
+                  <h3 className="text-lg font-semibold text-gray-100">
                     {student.first_name} {student.last_name}
                   </h3>
-                  <div className="flex gap-4 mt-1 text-sm text-slate-400">
+                  <div className="flex gap-4 mt-1 text-sm text-gray-400">
                     <span>ID: {student.student_id}</span>
                     {student.email && <span>Email: {student.email}</span>}
                   </div>
@@ -272,15 +272,15 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
       >
         <form onSubmit={handleBulkUpload} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">CSV File</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">CSV File</label>
             <input
               type="file"
               accept=".csv"
               onChange={handleFileChange}
-              className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-dark-card border border-dark-border rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary"
               required
             />
-            <p className="mt-2 text-xs text-slate-400">
+            <p className="mt-2 text-xs text-gray-400">
               CSV should contain: first_name, last_name, student_id, email (optional)
             </p>
           </div>
@@ -291,24 +291,24 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
               id="hasHeader"
               checked={hasHeader}
               onChange={(e) => setHasHeader(e.target.checked)}
-              className="w-4 h-4 text-blue-600 bg-slate-800 border-slate-600 rounded focus:ring-blue-500"
+              className="w-4 h-4 text-primary bg-dark-card border-dark-border rounded focus:ring-primary"
             />
-            <label htmlFor="hasHeader" className="text-sm text-slate-300">
+            <label htmlFor="hasHeader" className="text-sm text-gray-300">
               CSV file has header row
             </label>
           </div>
 
           {uploadResult && (
-            <div className="p-4 bg-slate-700 rounded-lg">
-              <p className="text-green-400 font-medium mb-2">{uploadResult.message}</p>
-              <div className="text-sm text-slate-300">
+            <div className="p-4 bg-dark-hover rounded-lg">
+              <p className="text-success font-medium mb-2">{uploadResult.message}</p>
+              <div className="text-sm text-gray-300">
                 <p>✓ Created: {uploadResult.total_created}</p>
                 {uploadResult.total_skipped > 0 && (
                   <>
-                    <p className="text-yellow-400 mt-2">⚠ Skipped: {uploadResult.total_skipped}</p>
+                    <p className="text-warning mt-2">⚠ Skipped: {uploadResult.total_skipped}</p>
                     <div className="mt-2 max-h-40 overflow-y-auto">
                       {uploadResult.skipped.map((item: any, index: number) => (
-                        <p key={index} className="text-xs text-slate-400">
+                        <p key={index} className="text-xs text-gray-400">
                           {item.first_name} {item.last_name} ({item.student_id}): {item.reason}
                         </p>
                       ))}

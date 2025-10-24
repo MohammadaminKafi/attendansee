@@ -8,19 +8,33 @@ export default {
     extend: {
       colors: {
         dark: {
-          bg: '#0f172a',
-          card: '#1e293b',
-          hover: '#334155',
-          border: '#475569',
+          bg: '#080e08',      // Very dark background
+          card: '#0e180e',    // Slightly lighter for cards
+          hover: '#283028',   // Hover state
+          border: '#283828',  // Subtle borders
+          light: '#388838',   // Lighter elements
         },
         primary: {
-          DEFAULT: '#3b82f6',
-          hover: '#2563eb',
-          light: '#60a5fa',
+          DEFAULT: '#10b981', // Emerald green
+          hover: '#059669',   // Darker green on hover
+          light: '#34d399',   // Lighter green
+          dark: '#047857',    // Darkest green
         },
-        success: '#10b981',
-        danger: '#ef4444',
-        warning: '#f59e0b',
+        success: {
+          DEFAULT: '#10b981', // Same as primary green
+          light: '#34d399',
+          dark: '#047857',
+        },
+        danger: {
+          DEFAULT: '#dc2626', // Adjusted red to complement green
+          light: '#ef4444',
+          dark: '#991b1b',
+        },
+        warning: {
+          DEFAULT: '#d97706', // Muted amber
+          light: '#f59e0b',
+          dark: '#92400e',
+        },
       },
     },
   },
