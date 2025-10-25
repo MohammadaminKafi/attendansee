@@ -167,12 +167,13 @@ class FaceCropSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'image', 'image_id', 'student', 'student_name',
             'crop_image_path', 'coordinates', 'coordinates_dict',
-            'confidence_score', 'is_identified', 'created_at', 'updated_at'
+            'confidence_score', 'is_identified', 'embedding_model',
+            'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'image', 'image_id', 'crop_image_path', 'coordinates',
             'confidence_score', 'is_identified', 'created_at', 'updated_at',
-            'student_name', 'coordinates_dict'
+            'student_name', 'coordinates_dict', 'embedding_model'
         ]
     
     def get_coordinates_dict(self, obj):

@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db.models import Count, Q
 from django.utils import timezone
+import os
 from .models import Class, Student, Session, Image, FaceCrop
 from .serializers import (
     ClassSerializer, StudentSerializer, SessionSerializer,
@@ -1351,7 +1352,11 @@ class FaceCropViewSet(viewsets.ModelViewSet):
         """
         from attendance.services import EmbeddingService
         from attendance.serializers import GenerateEmbeddingSerializer
+        import logging
+        import gc
+        import time
         
+        logger = logging.getLogger(__name__)
         crop = self.get_object()
         
         serializer = GenerateEmbeddingSerializer(data=request.data)
@@ -1361,9 +1366,12 @@ class FaceCropViewSet(viewsets.ModelViewSet):
         model_name = serializer.validated_data.get('model_name', 'facenet')
         force_regenerate = serializer.validated_data.get('force_regenerate', False)
         
+        logger.info(f"Generating embedding for crop {crop.id} using {model_name}")
+        
         # Check if embedding already exists
         # Use 'is not None' to avoid ambiguous truth value error with arrays
         if not force_regenerate and crop.embedding is not None and crop.embedding_model == model_name:
+            logger.info(f"Embedding already exists for crop {crop.id}, skipping generation")
             return Response({
                 'status': 'already_exists',
                 'crop_id': crop.id,
@@ -1372,31 +1380,66 @@ class FaceCropViewSet(viewsets.ModelViewSet):
                 'message': 'Embedding already exists'
             })
         
+        embedding_service = None
         try:
+            # Verify file exists before processing
+            crop_path = crop.crop_image_path.path
+            if not os.path.exists(crop_path):
+                logger.error(f"Crop image file not found: {crop_path}")
+                return Response(
+                    {'error': f'Crop image file not found: {crop_path}'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            logger.info(f"Processing crop image at: {crop_path}")
+            
             # Generate embedding
             embedding_service = EmbeddingService(model_name=model_name)
-            crop_path = crop.crop_image_path.path
             embedding_obj = embedding_service.generate_embedding(crop_path)
             
+            # Convert to list for database storage
+            embedding_list = embedding_obj.vector.tolist()
+            
             # Save to database
-            crop.embedding = embedding_obj.vector.tolist()
+            crop.embedding = embedding_list
             crop.embedding_model = model_name
             crop.save(update_fields=['embedding', 'embedding_model', 'updated_at'])
+            
+            logger.info(f"Successfully generated {embedding_obj.dimension}D embedding for crop {crop.id}")
+            
+            # Clean up
+            del embedding_obj
+            del embedding_list
+            gc.collect()
+            
+            # Small delay to allow TensorFlow to fully clean up
+            time.sleep(0.1)
             
             return Response({
                 'status': 'success',
                 'crop_id': crop.id,
                 'embedding_model': model_name,
-                'embedding_dimension': embedding_obj.dimension,
+                'embedding_dimension': embedding_obj.dimension if 'embedding_obj' in locals() else len(crop.embedding),
                 'message': 'Embedding generated successfully'
             })
         
         except FileNotFoundError as e:
+            logger.error(f"File not found for crop {crop.id}: {str(e)}")
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_404_NOT_FOUND
             )
+        except ValueError as e:
+            logger.error(f"Value error generating embedding for crop {crop.id}: {str(e)}")
+            return Response(
+                {
+                    'error': 'Invalid crop image or model configuration',
+                    'details': str(e)
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
+            logger.error(f"Failed to generate embedding for crop {crop.id}: {str(e)}", exc_info=True)
             return Response(
                 {
                     'error': 'Failed to generate embedding',
@@ -1404,6 +1447,11 @@ class FaceCropViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        finally:
+            # Force cleanup
+            if embedding_service:
+                del embedding_service
+            gc.collect()
     
     @action(detail=False, methods=['post'], url_path='generate-embeddings-batch')
     def generate_embeddings_batch(self, request):
