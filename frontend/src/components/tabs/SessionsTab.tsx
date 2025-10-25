@@ -171,7 +171,7 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
       render: (session) => (
         <div className="flex items-center justify-between group">
           <span>{session.name}</span>
-          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex gap-2 transition-opacity">
             <button
               onClick={(e) => {
                 e.stopPropagation();

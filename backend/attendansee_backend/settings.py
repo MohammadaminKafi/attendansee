@@ -97,6 +97,15 @@ DATABASES = {
     }
 }
 
+# Test database configuration
+# Use the same database user for tests to avoid permission issues
+import sys
+if 'test' in sys.argv or 'pytest' in sys.modules:
+    DATABASES['default']['TEST'] = {
+        'NAME': 'test_attendansee_db',
+        # Keep same user/password to maintain permissions
+    }
+
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -219,3 +228,6 @@ DJOSER = {
         'user_list': ['rest_framework.permissions.IsAdminUser'],
     },
 }
+
+# Swagger (drf-yasg) Settings
+SWAGGER_USE_COMPAT_RENDERERS = False

@@ -10,7 +10,7 @@ from .serializers import (
     ClassSerializer, StudentSerializer, SessionSerializer,
     ImageSerializer, FaceCropSerializer, FaceCropDetailSerializer,
     BulkStudentUploadSerializer, ProcessImageSerializer,
-    AggregateCropsSerializer, AggregateClassSerializer
+    AggregateCropsSerializer, AggregateClassSerializer, MergeStudentSerializer
 )
 from .permissions import IsOwnerOrAdmin, IsClassOwnerOrAdmin
 
@@ -246,6 +246,261 @@ class ClassViewSet(viewsets.ModelViewSet):
             'message': 'Class aggregation completed successfully. '
                       'Note: Full aggregation logic will be implemented with core face recognition module.'
         })
+    
+    @action(detail=True, methods=['get'], url_path='attendance-report')
+    def attendance_report(self, request, pk=None):
+        """
+        Get attendance report matrix for the class.
+        
+        Returns a matrix showing which students attended which sessions.
+        This is useful for displaying in a tabular format.
+        
+        Query Parameters:
+        - include_unprocessed: Include unprocessed sessions (default: false)
+        - date_from: Start date filter (YYYY-MM-DD)
+        - date_to: End date filter (YYYY-MM-DD)
+        
+        Returns:
+        - List of students with attendance data
+        - List of sessions
+        - Attendance matrix (student_id -> session_id -> present/absent)
+        """
+        class_obj = self.get_object()
+        
+        # Get query parameters
+        include_unprocessed = request.query_params.get('include_unprocessed', 'false').lower() == 'true'
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        
+        # Filter sessions
+        sessions_query = Session.objects.filter(class_session=class_obj)
+        
+        if not include_unprocessed:
+            sessions_query = sessions_query.filter(is_processed=True)
+        
+        if date_from:
+            try:
+                from datetime import datetime
+                date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                sessions_query = sessions_query.filter(date__gte=date_from_obj)
+            except ValueError:
+                pass
+        
+        if date_to:
+            try:
+                from datetime import datetime
+                date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                sessions_query = sessions_query.filter(date__lte=date_to_obj)
+            except ValueError:
+                pass
+        
+        sessions = sessions_query.order_by('date', 'created_at')
+        
+        # Get all students
+        students = class_obj.students.all().order_by('last_name', 'first_name')
+        
+        # Build attendance matrix
+        attendance_matrix = []
+        
+        for student in students:
+            # Get sessions this student attended
+            attended_session_ids = set(
+                Session.objects.filter(
+                    id__in=sessions.values_list('id', flat=True),
+                    images__face_crops__student=student
+                ).distinct().values_list('id', flat=True)
+            )
+            
+            # Build attendance record for each session
+            session_attendance = []
+            for session in sessions:
+                detection_count = FaceCrop.objects.filter(
+                    image__session=session,
+                    student=student
+                ).count()
+                
+                session_attendance.append({
+                    'session_id': session.id,
+                    'present': session.id in attended_session_ids,
+                    'detection_count': detection_count
+                })
+            
+            # Calculate student statistics
+            attended_count = len(attended_session_ids)
+            total_sessions = sessions.count()
+            attendance_rate = (attended_count / total_sessions * 100) if total_sessions > 0 else 0
+            
+            attendance_matrix.append({
+                'student_id': student.id,
+                'first_name': student.first_name,
+                'last_name': student.last_name,
+                'full_name': student.full_name,
+                'student_number': student.student_id,
+                'email': student.email,
+                'attended_sessions': attended_count,
+                'total_sessions': total_sessions,
+                'attendance_rate': round(attendance_rate, 2),
+                'session_attendance': session_attendance
+            })
+        
+        # Build session summary
+        session_summary = []
+        for session in sessions:
+            present_count = Student.objects.filter(
+                class_enrolled=class_obj,
+                face_crops__image__session=session
+            ).distinct().count()
+            
+            session_summary.append({
+                'id': session.id,
+                'name': session.name,
+                'date': session.date,
+                'start_time': session.start_time,
+                'end_time': session.end_time,
+                'is_processed': session.is_processed,
+                'present_count': present_count,
+                'total_students': students.count(),
+                'attendance_rate': round((present_count / students.count() * 100) if students.count() > 0 else 0, 2)
+            })
+        
+        return Response({
+            'class_id': class_obj.id,
+            'class_name': class_obj.name,
+            'total_students': students.count(),
+            'total_sessions': sessions.count(),
+            'date_range': {
+                'from': sessions.first().date if sessions.exists() else None,
+                'to': sessions.last().date if sessions.exists() else None
+            },
+            'sessions': session_summary,
+            'attendance_matrix': attendance_matrix
+        })
+    
+    @action(detail=True, methods=['post'], url_path='cluster-crops')
+    def cluster_crops(self, request, pk=None):
+        """
+        Cluster all face crops across all sessions in a class.
+        
+        This endpoint groups similar faces together across the entire class
+        and optionally creates Student records for each cluster.
+        
+        Parameters:
+        - max_clusters: Maximum number of clusters (default: 50)
+        - similarity_threshold: Threshold for grouping (default: 0.5)
+        - embedding_model: Model to use ('facenet' or 'arcface')
+        - create_students: Create Student records for clusters (default: true)
+        - assign_crops: Assign crops to created students (default: true)
+        - include_identified: Include already identified crops (default: false)
+        
+        Returns:
+        - Clustering results with statistics
+        """
+        from attendance.services import FaceCropClusteringService
+        from attendance.serializers import ClusterFaceCropsSerializer
+        
+        class_obj = self.get_object()
+        
+        serializer = ClusterFaceCropsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        max_clusters = serializer.validated_data.get('max_clusters', 50)
+        similarity_threshold = serializer.validated_data.get('similarity_threshold', 0.5)
+        embedding_model = serializer.validated_data.get('embedding_model', 'facenet')
+        create_students = serializer.validated_data.get('create_students', True)
+        assign_crops = serializer.validated_data.get('assign_crops', True)
+        include_identified = serializer.validated_data.get('include_identified', False)
+        
+        try:
+            clustering_service = FaceCropClusteringService(
+                embedding_model=embedding_model,
+                max_clusters=max_clusters,
+                similarity_threshold=similarity_threshold
+            )
+            
+            result = clustering_service.cluster_class_crops(
+                class_id=class_obj.id,
+                create_students=create_students,
+                assign_crops=assign_crops,
+                include_identified=include_identified
+            )
+            
+            return Response(result)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Clustering failed',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'], url_path='assign-crops')
+    def assign_crops_batch(self, request, pk=None):
+        """
+        Assign all unidentified face crops in a class to students using KNN.
+        
+        This processes all unidentified crops across all sessions in the class.
+        
+        Parameters:
+        - k: Number of nearest neighbors (default: 5)
+        - similarity_threshold: Minimum similarity (default: 0.6)
+        - embedding_model: Model to use ('facenet' or 'arcface')
+        - use_voting: Use majority voting (default: true)
+        - auto_commit: Save assignments to database (default: true)
+        
+        Returns:
+        - Batch assignment results with statistics
+        """
+        from attendance.services import FaceCropAssignmentService
+        from attendance.serializers import AssignFaceCropSerializer
+        
+        class_obj = self.get_object()
+        
+        serializer = AssignFaceCropSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        k = serializer.validated_data.get('k', 5)
+        similarity_threshold = serializer.validated_data.get('similarity_threshold', 0.6)
+        embedding_model = serializer.validated_data.get('embedding_model', 'facenet')
+        use_voting = serializer.validated_data.get('use_voting', True)
+        auto_commit = serializer.validated_data.get('auto_commit', True)
+        
+        try:
+            assignment_service = FaceCropAssignmentService(
+                embedding_model=embedding_model,
+                k=k,
+                similarity_threshold=similarity_threshold,
+                use_voting=use_voting
+            )
+            
+            result = assignment_service.assign_class_crops(
+                class_id=class_obj.id,
+                auto_commit=auto_commit
+            )
+            
+            return Response(result)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Assignment failed',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class StudentViewSet(viewsets.ModelViewSet):
@@ -275,6 +530,25 @@ class StudentViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(class_enrolled_id=class_id)
         
         return queryset.order_by('last_name', 'first_name')
+    
+    @property
+    def paginator(self):
+        """
+        Override paginator to support custom page_size in query params.
+        """
+        if not hasattr(self, '_paginator'):
+            if self.pagination_class is None:
+                self._paginator = None
+            else:
+                from rest_framework.pagination import PageNumberPagination
+                
+                class CustomPageNumberPagination(PageNumberPagination):
+                    page_size = 20
+                    page_size_query_param = 'page_size'
+                    max_page_size = 10000
+                
+                self._paginator = CustomPageNumberPagination()
+        return self._paginator
     
     def get_serializer_context(self):
         """
@@ -312,6 +586,157 @@ class StudentViewSet(viewsets.ModelViewSet):
         }
         
         return Response(stats)
+    
+    @action(detail=True, methods=['get'], url_path='detail-report')
+    def detail_report(self, request, pk=None):
+        """
+        Get detailed report for a student including all sessions attended
+        and face crops per session.
+        """
+        student = self.get_object()
+        
+        # Get all sessions in the student's class ordered by date
+        all_sessions = Session.objects.filter(
+            class_session=student.class_enrolled
+        ).order_by('-date', '-created_at')
+        
+        # Get sessions where student was present
+        attended_session_ids = set(
+            Session.objects.filter(
+                images__face_crops__student=student
+            ).distinct().values_list('id', flat=True)
+        )
+        
+        # Build session attendance details
+        session_details = []
+        for session in all_sessions:
+            # Get face crops for this student in this session
+            face_crops = FaceCrop.objects.filter(
+                image__session=session,
+                student=student
+            ).select_related('image')
+            
+            crops_data = []
+            for crop in face_crops:
+                crops_data.append({
+                    'id': crop.id,
+                    'image_id': crop.image.id,
+                    'crop_image_path': str(crop.crop_image_path) if crop.crop_image_path else '',
+                    'confidence_score': crop.confidence_score,
+                    'created_at': crop.created_at
+                })
+            
+            session_details.append({
+                'session_id': session.id,
+                'session_name': session.name,
+                'date': session.date,
+                'start_time': session.start_time,
+                'end_time': session.end_time,
+                'was_present': session.id in attended_session_ids,
+                'detection_count': len(crops_data),
+                'face_crops': crops_data
+            })
+        
+        # Calculate statistics
+        total_sessions = all_sessions.count()
+        attended_count = len(attended_session_ids)
+        attendance_rate = (attended_count / total_sessions * 100) if total_sessions > 0 else 0
+        
+        return Response({
+            'student': StudentSerializer(student, context={'request': request}).data,
+            'statistics': {
+                'total_sessions': total_sessions,
+                'attended_sessions': attended_count,
+                'missed_sessions': total_sessions - attended_count,
+                'attendance_rate': round(attendance_rate, 2),
+                'total_detections': student.face_crops.count()
+            },
+            'sessions': session_details
+        })
+    
+    @action(detail=True, methods=['post'], url_path='merge')
+    def merge(self, request, pk=None):
+        """
+        Merge this student (source) into another student (target).
+        
+        This endpoint will:
+        1. Validate that both students exist and belong to the same class
+        2. Transfer all face crops from source student to target student
+        3. Delete the source student
+        
+        Parameters:
+        - target_student_id: ID of the student to merge into (required)
+        
+        Returns:
+        - Success message with statistics about transferred face crops
+        - Updated target student data
+        
+        Example:
+        POST /api/attendance/students/123/merge/
+        {
+            "target_student_id": 456
+        }
+        """
+        source_student = self.get_object()
+        
+        # Validate request data
+        serializer = MergeStudentSerializer(
+            data=request.data,
+            context={'source_student': source_student, 'request': request}
+        )
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        target_student = serializer.validated_data['target_student']
+        
+        # Count face crops before merge
+        source_crops_count = source_student.face_crops.count()
+        target_crops_before = target_student.face_crops.count()
+        
+        # Perform the merge in a transaction
+        from django.db import transaction
+        
+        try:
+            with transaction.atomic():
+                # Transfer all face crops from source to target
+                face_crops = FaceCrop.objects.filter(student=source_student)
+                face_crops.update(student=target_student)
+                
+                # Store source student info for response
+                source_student_info = {
+                    'id': source_student.id,
+                    'full_name': source_student.full_name,
+                    'student_id': source_student.student_id
+                }
+                
+                # Delete the source student
+                source_student.delete()
+                
+                # Refresh target student data
+                target_student.refresh_from_db()
+                
+            # Return success response
+            return Response({
+                'status': 'success',
+                'message': f'Successfully merged students',
+                'source_student': source_student_info,
+                'target_student': StudentSerializer(target_student, context={'request': request}).data,
+                'statistics': {
+                    'face_crops_transferred': source_crops_count,
+                    'target_crops_before_merge': target_crops_before,
+                    'target_crops_after_merge': target_student.face_crops.count()
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Failed to merge students',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class SessionViewSet(viewsets.ModelViewSet):
@@ -397,6 +822,80 @@ class SessionViewSet(viewsets.ModelViewSet):
             'present_count': len(present_ids),
             'absent_count': all_students.count() - len(present_ids),
             'attendance': attendance_data
+        })
+    
+    @action(detail=True, methods=['get'], url_path='face-crops')
+    def face_crops(self, request, pk=None):
+        """
+        Get all face crops from all images in the session.
+        
+        This endpoint returns all face crops detected across all images
+        in the session, with optional filtering and sorting.
+        
+        Query Parameters:
+        - is_identified: Filter by identification status (true/false)
+        - student_id: Filter by specific student ID
+        - sort_by: Sort order (name, -name, identified, -identified, created, -created)
+        
+        Returns:
+        - List of face crops with detailed information
+        """
+        session_obj = self.get_object()
+        
+        # Get all face crops from images in this session
+        crops = FaceCrop.objects.filter(
+            image__session=session_obj
+        ).select_related('student', 'image')
+        
+        # Apply filters
+        is_identified = request.query_params.get('is_identified')
+        if is_identified is not None:
+            crops = crops.filter(is_identified=is_identified.lower() == 'true')
+        
+        student_id = request.query_params.get('student_id')
+        if student_id:
+            crops = crops.filter(student_id=student_id)
+        
+        # Apply sorting
+        sort_by = request.query_params.get('sort_by', '-created_at')
+        
+        # Map sort_by to actual field names
+        sort_mapping = {
+            'name': 'student__last_name',
+            '-name': '-student__last_name',
+            'identified': 'is_identified',
+            '-identified': '-is_identified',
+            'created': 'created_at',
+            '-created': '-created_at',
+        }
+        
+        if sort_by in sort_mapping:
+            sort_by = sort_mapping[sort_by]
+        
+        # For name sorting, handle None values by using COALESCE-like behavior
+        if 'student__last_name' in sort_by:
+            # Put unidentified crops at the end when sorting by name
+            from django.db.models import Case, When, Value, IntegerField
+            crops = crops.annotate(
+                has_student=Case(
+                    When(student__isnull=False, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField()
+                )
+            ).order_by('has_student', sort_by)
+        else:
+            crops = crops.order_by(sort_by)
+        
+        # Serialize the crops
+        serializer = FaceCropDetailSerializer(crops, many=True)
+        
+        return Response({
+            'session_id': session_obj.id,
+            'session_name': session_obj.name,
+            'total_crops': crops.count(),
+            'identified_crops': crops.filter(is_identified=True).count(),
+            'unidentified_crops': crops.filter(is_identified=False).count(),
+            'face_crops': serializer.data
         })
     
     @action(detail=True, methods=['post'], url_path='aggregate-crops')
@@ -488,6 +987,127 @@ class SessionViewSet(viewsets.ModelViewSet):
             'message': 'Crop aggregation completed successfully. '
                       'Note: Full aggregation logic will be implemented with core face recognition module.'
         }, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['post'], url_path='cluster-crops')
+    def cluster_crops(self, request, pk=None):
+        """
+        Cluster face crops in a session using embeddings.
+        
+        This endpoint groups similar faces together and optionally creates
+        Student records for each cluster.
+        
+        Parameters:
+        - max_clusters: Maximum number of clusters (default: 50)
+        - similarity_threshold: Threshold for grouping (default: 0.5)
+        - embedding_model: Model to use ('facenet' or 'arcface')
+        - create_students: Create Student records for clusters (default: true)
+        - assign_crops: Assign crops to created students (default: true)
+        
+        Returns:
+        - Clustering results with statistics
+        """
+        from attendance.services import FaceCropClusteringService
+        from attendance.serializers import ClusterFaceCropsSerializer
+        
+        session_obj = self.get_object()
+        
+        serializer = ClusterFaceCropsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        max_clusters = serializer.validated_data.get('max_clusters', 50)
+        similarity_threshold = serializer.validated_data.get('similarity_threshold', 0.5)
+        embedding_model = serializer.validated_data.get('embedding_model', 'facenet')
+        create_students = serializer.validated_data.get('create_students', True)
+        assign_crops = serializer.validated_data.get('assign_crops', True)
+        
+        try:
+            clustering_service = FaceCropClusteringService(
+                embedding_model=embedding_model,
+                max_clusters=max_clusters,
+                similarity_threshold=similarity_threshold
+            )
+            
+            result = clustering_service.cluster_session_crops(
+                session_id=session_obj.id,
+                create_students=create_students,
+                assign_crops=assign_crops
+            )
+            
+            return Response(result)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Clustering failed',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'], url_path='assign-crops')
+    def assign_crops_batch(self, request, pk=None):
+        """
+        Assign all unidentified face crops in a session to students using KNN.
+        
+        Parameters:
+        - k: Number of nearest neighbors (default: 5)
+        - similarity_threshold: Minimum similarity (default: 0.6)
+        - embedding_model: Model to use ('facenet' or 'arcface')
+        - use_voting: Use majority voting (default: true)
+        - auto_commit: Save assignments to database (default: true)
+        
+        Returns:
+        - Batch assignment results with statistics
+        """
+        from attendance.services import FaceCropAssignmentService
+        from attendance.serializers import AssignFaceCropSerializer
+        
+        session_obj = self.get_object()
+        
+        serializer = AssignFaceCropSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        k = serializer.validated_data.get('k', 5)
+        similarity_threshold = serializer.validated_data.get('similarity_threshold', 0.6)
+        embedding_model = serializer.validated_data.get('embedding_model', 'facenet')
+        use_voting = serializer.validated_data.get('use_voting', True)
+        auto_commit = serializer.validated_data.get('auto_commit', True)
+        
+        try:
+            assignment_service = FaceCropAssignmentService(
+                embedding_model=embedding_model,
+                k=k,
+                similarity_threshold=similarity_threshold,
+                use_voting=use_voting
+            )
+            
+            result = assignment_service.assign_session_crops(
+                session_id=session_obj.id,
+                auto_commit=auto_commit
+            )
+            
+            return Response(result)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Assignment failed',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class ImageViewSet(viewsets.ModelViewSet):
@@ -597,15 +1217,22 @@ class ImageViewSet(viewsets.ModelViewSet):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
-        min_face_size = serializer.validated_data.get('min_face_size', 20)
-        confidence_threshold = serializer.validated_data.get('confidence_threshold', 0.5)
+        # Extract parameters from validated data
+        detector_backend = serializer.validated_data.get('detector_backend', 'retinaface')
+        min_confidence = serializer.validated_data.get('confidence_threshold', 0.0)
+        apply_background_effect = serializer.validated_data.get('apply_background_effect', True)
+        rectangle_color = tuple(serializer.validated_data.get('rectangle_color', [0, 255, 0]))
+        rectangle_thickness = serializer.validated_data.get('rectangle_thickness', 2)
         
         try:
             # Process the image and extract face crops
             result = process_image_with_face_detection(
                 image_obj=image_obj,
-                min_face_size=min_face_size,
-                confidence_threshold=confidence_threshold
+                detector_backend=detector_backend,
+                min_confidence=min_confidence,
+                apply_background_effect=apply_background_effect,
+                rectangle_color=rectangle_color,
+                rectangle_thickness=rectangle_thickness
             )
             
             return Response({
@@ -641,9 +1268,10 @@ class FaceCropViewSet(viewsets.ModelViewSet):
     Admins: Full CRUD access to all face crops
     Users: Can only update the student field for crops in their own classes
     Read and list access for crops in their own classes
+    DELETE is allowed to remove unwanted face crops
     """
     permission_classes = [IsAuthenticated, IsClassOwnerOrAdmin]
-    http_method_names = ['get', 'patch', 'post', 'head', 'options']
+    http_method_names = ['get', 'patch', 'post', 'delete', 'head', 'options']
     
     def get_serializer_class(self):
         """
@@ -708,3 +1336,221 @@ class FaceCropViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(crop)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'], url_path='generate-embedding')
+    def generate_embedding(self, request, pk=None):
+        """
+        Generate embedding for a single face crop.
+        
+        Parameters:
+        - model_name: Embedding model to use ('facenet' or 'arcface')
+        - force_regenerate: Force regeneration even if exists
+        
+        Returns:
+        - Embedding generation status and info
+        """
+        from attendance.services import EmbeddingService
+        from attendance.serializers import GenerateEmbeddingSerializer
+        
+        crop = self.get_object()
+        
+        serializer = GenerateEmbeddingSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        model_name = serializer.validated_data.get('model_name', 'facenet')
+        force_regenerate = serializer.validated_data.get('force_regenerate', False)
+        
+        # Check if embedding already exists
+        # Use 'is not None' to avoid ambiguous truth value error with arrays
+        if not force_regenerate and crop.embedding is not None and crop.embedding_model == model_name:
+            return Response({
+                'status': 'already_exists',
+                'crop_id': crop.id,
+                'embedding_model': crop.embedding_model,
+                'embedding_dimension': len(crop.embedding),
+                'message': 'Embedding already exists'
+            })
+        
+        try:
+            # Generate embedding
+            embedding_service = EmbeddingService(model_name=model_name)
+            crop_path = crop.crop_image_path.path
+            embedding_obj = embedding_service.generate_embedding(crop_path)
+            
+            # Save to database
+            crop.embedding = embedding_obj.vector.tolist()
+            crop.embedding_model = model_name
+            crop.save(update_fields=['embedding', 'embedding_model', 'updated_at'])
+            
+            return Response({
+                'status': 'success',
+                'crop_id': crop.id,
+                'embedding_model': model_name,
+                'embedding_dimension': embedding_obj.dimension,
+                'message': 'Embedding generated successfully'
+            })
+        
+        except FileNotFoundError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Failed to generate embedding',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['post'], url_path='generate-embeddings-batch')
+    def generate_embeddings_batch(self, request):
+        """
+        Generate embeddings for multiple face crops.
+        
+        Parameters:
+        - face_crop_ids: List of FaceCrop IDs
+        - model_name: Embedding model to use
+        - force_regenerate: Force regeneration even if exists
+        
+        Returns:
+        - Batch generation results
+        """
+        from attendance.services import EmbeddingService
+        from attendance.serializers import GenerateEmbeddingSerializer
+        
+        serializer = GenerateEmbeddingSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        face_crop_ids = serializer.validated_data.get('face_crop_ids', [])
+        model_name = serializer.validated_data.get('model_name', 'facenet')
+        force_regenerate = serializer.validated_data.get('force_regenerate', False)
+        
+        if not face_crop_ids:
+            return Response(
+                {'error': 'face_crop_ids is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get face crops
+        crops = FaceCrop.objects.filter(id__in=face_crop_ids)
+        
+        if not crops.exists():
+            return Response(
+                {'error': 'No face crops found with provided IDs'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Generate embeddings
+        embedding_service = EmbeddingService(model_name=model_name)
+        results = []
+        success_count = 0
+        skipped_count = 0
+        error_count = 0
+        
+        for crop in crops:
+            # Check if already exists
+            # Use 'is not None' to avoid ambiguous truth value error with arrays
+            if not force_regenerate and crop.embedding is not None and crop.embedding_model == model_name:
+                results.append({
+                    'crop_id': crop.id,
+                    'status': 'skipped',
+                    'message': 'Embedding already exists'
+                })
+                skipped_count += 1
+                continue
+            
+            try:
+                crop_path = crop.crop_image_path.path
+                embedding_obj = embedding_service.generate_embedding(crop_path)
+                
+                crop.embedding = embedding_obj.vector.tolist()
+                crop.embedding_model = model_name
+                crop.save(update_fields=['embedding', 'embedding_model', 'updated_at'])
+                
+                results.append({
+                    'crop_id': crop.id,
+                    'status': 'success',
+                    'embedding_dimension': embedding_obj.dimension
+                })
+                success_count += 1
+            
+            except Exception as e:
+                results.append({
+                    'crop_id': crop.id,
+                    'status': 'error',
+                    'error': str(e)
+                })
+                error_count += 1
+        
+        return Response({
+            'status': 'completed',
+            'total': len(face_crop_ids),
+            'success': success_count,
+            'skipped': skipped_count,
+            'errors': error_count,
+            'model_name': model_name,
+            'results': results
+        })
+    
+    @action(detail=True, methods=['post'], url_path='assign')
+    def assign_crop(self, request, pk=None):
+        """
+        Assign a face crop to a student using KNN similarity search.
+        
+        Parameters:
+        - k: Number of nearest neighbors
+        - similarity_threshold: Minimum similarity for assignment
+        - embedding_model: Model to use for embeddings
+        - use_voting: Use majority voting in KNN
+        - auto_commit: Save assignment to database
+        
+        Returns:
+        - Assignment result with student info and confidence
+        """
+        from attendance.services import FaceCropAssignmentService
+        from attendance.serializers import AssignFaceCropSerializer
+        
+        crop = self.get_object()
+        
+        serializer = AssignFaceCropSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        k = serializer.validated_data.get('k', 5)
+        similarity_threshold = serializer.validated_data.get('similarity_threshold', 0.6)
+        embedding_model = serializer.validated_data.get('embedding_model', 'facenet')
+        use_voting = serializer.validated_data.get('use_voting', True)
+        auto_commit = serializer.validated_data.get('auto_commit', True)
+        
+        try:
+            assignment_service = FaceCropAssignmentService(
+                embedding_model=embedding_model,
+                k=k,
+                similarity_threshold=similarity_threshold,
+                use_voting=use_voting
+            )
+            
+            result = assignment_service.assign_crop(
+                crop_id=crop.id,
+                auto_commit=auto_commit
+            )
+            
+            return Response(result)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Assignment failed',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

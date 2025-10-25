@@ -10,10 +10,19 @@ import type {
   Student,
   CreateStudentData,
   UpdateStudentData,
+  MergeStudentData,
+  MergeStudentResponse,
   Session,
   CreateSessionData,
   UpdateSessionData,
   Image,
+  FaceCrop,
+  FaceCropDetail,
+  UpdateFaceCropData,
+  ProcessImageData,
+  ProcessImageResponse,
+  StudentDetailReport,
+  AttendanceReport,
 } from '@/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
@@ -160,6 +169,20 @@ export const classesAPI = {
     const response = await api.get(`/attendance/classes/${id}/statistics/`);
     return response.data;
   },
+
+  getAttendanceReport: async (
+    id: number,
+    params?: {
+      include_unprocessed?: boolean;
+      date_from?: string;
+      date_to?: string;
+    }
+  ): Promise<AttendanceReport> => {
+    const response = await api.get<AttendanceReport>(`/attendance/classes/${id}/attendance-report/`, {
+      params,
+    });
+    return response.data;
+  },
 };
 
 // Sessions API
@@ -188,18 +211,42 @@ export const sessionsAPI = {
   deleteSession: async (id: number): Promise<void> => {
     await api.delete(`/attendance/sessions/${id}/`);
   },
+
+  getSessionFaceCrops: async (
+    sessionId: number,
+    params?: {
+      is_identified?: boolean;
+      student_id?: number;
+      sort_by?: string;
+    }
+  ): Promise<{
+    session_id: number;
+    session_name: string;
+    total_crops: number;
+    identified_crops: number;
+    unidentified_crops: number;
+    face_crops: FaceCropDetail[];
+  }> => {
+    const response = await api.get(`/attendance/sessions/${sessionId}/face-crops/`, { params });
+    return response.data;
+  },
 };
 
 // Students API
 export const studentsAPI = {
-  getStudents: async (classId?: number): Promise<Student[]> => {
-    const params = classId ? { class_id: classId, page_size: 1000 } : { page_size: 1000 };
+  getStudents: async (classId?: number, pageSize: number = 10000): Promise<Student[]> => {
+    const params = classId ? { class_id: classId, page_size: pageSize } : { page_size: pageSize };
     const response = await api.get<PaginatedResponse<Student>>('/attendance/students/', { params });
     return response.data.results;
   },
 
   getStudent: async (id: number): Promise<Student> => {
     const response = await api.get<Student>(`/attendance/students/${id}/`);
+    return response.data;
+  },
+
+  getStudentDetailReport: async (id: number): Promise<StudentDetailReport> => {
+    const response = await api.get<StudentDetailReport>(`/attendance/students/${id}/detail-report/`);
     return response.data;
   },
 
@@ -215,6 +262,14 @@ export const studentsAPI = {
 
   deleteStudent: async (id: number): Promise<void> => {
     await api.delete(`/attendance/students/${id}/`);
+  },
+
+  mergeStudents: async (sourceStudentId: number, data: MergeStudentData): Promise<MergeStudentResponse> => {
+    const response = await api.post<MergeStudentResponse>(
+      `/attendance/students/${sourceStudentId}/merge/`,
+      data
+    );
+    return response.data;
   },
 
   bulkUploadStudents: async (classId: number, file: File, hasHeader: boolean): Promise<{
@@ -250,6 +305,11 @@ export const imagesAPI = {
     return response.data.results;
   },
 
+  getImage: async (id: number): Promise<Image> => {
+    const response = await api.get<Image>(`/attendance/images/${id}/`);
+    return response.data;
+  },
+
   uploadImage: async (sessionId: number, file: File): Promise<Image> => {
     const formData = new FormData();
     formData.append('session', sessionId.toString());
@@ -265,6 +325,41 @@ export const imagesAPI = {
 
   deleteImage: async (id: number): Promise<void> => {
     await api.delete(`/attendance/images/${id}/`);
+  },
+
+  processImage: async (imageId: number, options?: ProcessImageData): Promise<ProcessImageResponse> => {
+    const response = await api.post<ProcessImageResponse>(
+      `/attendance/images/${imageId}/process-image/`,
+      options || {}
+    );
+    return response.data;
+  },
+};
+
+// Face Crops API
+export const faceCropsAPI = {
+  getFaceCrops: async (imageId: number): Promise<FaceCropDetail[]> => {
+    const response = await api.get<FaceCropDetail[]>(`/attendance/images/${imageId}/face_crops/`);
+    return response.data;
+  },
+
+  getFaceCrop: async (id: number): Promise<FaceCropDetail> => {
+    const response = await api.get<FaceCropDetail>(`/attendance/face-crops/${id}/`);
+    return response.data;
+  },
+
+  updateFaceCrop: async (id: number, data: UpdateFaceCropData): Promise<FaceCrop> => {
+    const response = await api.patch<FaceCrop>(`/attendance/face-crops/${id}/`, data);
+    return response.data;
+  },
+
+  unidentifyFaceCrop: async (id: number): Promise<FaceCrop> => {
+    const response = await api.post<FaceCrop>(`/attendance/face-crops/${id}/unidentify/`);
+    return response.data;
+  },
+
+  deleteFaceCrop: async (id: number): Promise<void> => {
+    await api.delete(`/attendance/face-crops/${id}/`);
   },
 };
 

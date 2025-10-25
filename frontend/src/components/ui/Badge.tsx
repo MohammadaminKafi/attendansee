@@ -2,7 +2,7 @@ import React from 'react';
 
 interface BadgeProps {
   children: React.ReactNode;
-  variant?: 'success' | 'warning' | 'error' | 'info' | 'default';
+  variant?: 'success' | 'warning' | 'error' | 'danger' | 'info' | 'default';
   className?: string;
 }
 
@@ -10,6 +10,7 @@ const variantStyles = {
   success: 'bg-success/20 text-success-light ring-success/40 shadow-success/10',
   warning: 'bg-warning/20 text-warning-light ring-warning/40 shadow-warning/10',
   error: 'bg-danger/20 text-danger-light ring-danger/40 shadow-danger/10',
+  danger: 'bg-danger/20 text-danger-light ring-danger/40 shadow-danger/10',
   info: 'bg-primary/20 text-primary-light ring-primary/40 shadow-primary/10',
   default: 'bg-dark-light/30 text-gray-300 ring-dark-border shadow-dark-light/10',
 };

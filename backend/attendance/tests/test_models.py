@@ -311,7 +311,8 @@ class TestImageModel:
         
         assert image.session == session1
         assert image.original_image_path == '/path/to/image.jpg'
-        assert image.processed_image_path == ''
+        # ImageField with default='' returns an empty string, but we need to check .name
+        assert not image.processed_image_path or image.processed_image_path.name == ''
         assert image.upload_date == upload_time
         assert image.is_processed is False
         assert image.processing_date is None
@@ -330,7 +331,8 @@ class TestImageModel:
             original_image_path='/path/to/image.jpg'
         )
         
-        assert image.processed_image_path == ''
+        # ImageField with default='' returns an empty string, but we need to check .name
+        assert not image.processed_image_path or image.processed_image_path.name == ''
         assert image.is_processed is False
         assert image.processing_date is None
         assert image.upload_date is not None  # Has default=timezone.now

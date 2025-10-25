@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { sessionsAPI, imagesAPI, classesAPI } from '@/services/api';
-import { Session, Image, Class } from '@/types';
+import { sessionsAPI, imagesAPI, classesAPI, studentsAPI } from '@/services/api';
+import { Session, Image, Class, FaceCropDetail, Student } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
-import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
+import { ProcessingOverlay } from '@/components/ui/ProcessingSpinner';
+import { FaceCropsSection } from '@/components/ui/FaceCropsSection';
+import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers } from 'lucide-react';
 
 const SessionDetailPage: React.FC = () => {
   const { classId, sessionId } = useParams<{ classId: string; sessionId: string }>();
@@ -16,11 +18,19 @@ const SessionDetailPage: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [classData, setClassData] = useState<Class | null>(null);
   const [images, setImages] = useState<Image[]>([]);
+  const [faceCrops, setFaceCrops] = useState<FaceCropDetail[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDeleteImageModal, setShowDeleteImageModal] = useState(false);
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
+  const [showFaceCropsSection, setShowFaceCropsSection] = useState(false);
+  
+  // Processing states
+  const [processingImages, setProcessingImages] = useState<Set<number>>(new Set());
+  const [processingAll, setProcessingAll] = useState(false);
+  const [processProgress, setProcessProgress] = useState({ current: 0, total: 0 });
 
   useEffect(() => {
     loadData();
@@ -33,15 +43,24 @@ const SessionDetailPage: React.FC = () => {
       setLoading(true);
       setError(null);
       
-      const [sessionData, classInfo, imagesData] = await Promise.all([
+      const [sessionData, classInfo, imagesData, studentsData, faceCropsResponse] = await Promise.all([
         sessionsAPI.getSession(parseInt(sessionId)),
         classesAPI.getClass(parseInt(classId)),
-        imagesAPI.getImages(parseInt(sessionId))
+        imagesAPI.getImages(parseInt(sessionId)),
+        studentsAPI.getStudents(parseInt(classId)),
+        sessionsAPI.getSessionFaceCrops(parseInt(sessionId))
       ]);
       
       setSession(sessionData);
       setClassData(classInfo);
       setImages(imagesData);
+      setStudents(studentsData);
+      setFaceCrops(faceCropsResponse.face_crops);
+      
+      // Show face crops section if there are any crops
+      if (faceCropsResponse.face_crops.length > 0) {
+        setShowFaceCropsSection(true);
+      }
     } catch (err) {
       console.error('Error loading data:', err);
       setError('Failed to load session data');
@@ -107,6 +126,88 @@ const SessionDetailPage: React.FC = () => {
     }
   };
 
+  const handleProcessImage = async (imageId: number) => {
+    try {
+      setProcessingImages(prev => new Set(prev).add(imageId));
+      setError(null);
+
+      await imagesAPI.processImage(imageId, {
+        detector_backend: 'retinaface',
+        confidence_threshold: 0.5,
+        apply_background_effect: true,
+      });
+
+      // Reload the specific image
+      const updatedImage = await imagesAPI.getImage(imageId);
+      setImages(prev => prev.map(img => img.id === imageId ? updatedImage : img));
+      
+      // Reload session to update statistics
+      if (sessionId) {
+        const updatedSession = await sessionsAPI.getSession(parseInt(sessionId));
+        setSession(updatedSession);
+      }
+    } catch (err: any) {
+      console.error('Error processing image:', err);
+      setError(err.response?.data?.error || 'Failed to process image');
+    } finally {
+      setProcessingImages(prev => {
+        const next = new Set(prev);
+        next.delete(imageId);
+        return next;
+      });
+    }
+  };
+
+  const handleProcessAllImages = async () => {
+    const unprocessedImages = images.filter(img => !img.is_processed);
+    
+    if (unprocessedImages.length === 0) {
+      setError('All images are already processed');
+      return;
+    }
+
+    try {
+      setProcessingAll(true);
+      setError(null);
+      setProcessProgress({ current: 0, total: unprocessedImages.length });
+
+      // Process images sequentially to avoid overwhelming the server
+      for (let i = 0; i < unprocessedImages.length; i++) {
+        const img = unprocessedImages[i];
+        setProcessProgress({ current: i, total: unprocessedImages.length });
+        
+        try {
+          await imagesAPI.processImage(img.id, {
+            detector_backend: 'retinaface',
+            confidence_threshold: 0.5,
+            apply_background_effect: true,
+          });
+
+          // Update the specific image in state
+          const updatedImage = await imagesAPI.getImage(img.id);
+          setImages(prev => prev.map(image => image.id === img.id ? updatedImage : image));
+        } catch (err) {
+          console.error(`Error processing image ${img.id}:`, err);
+          // Continue with next image even if one fails
+        }
+      }
+
+      setProcessProgress({ current: unprocessedImages.length, total: unprocessedImages.length });
+
+      // Reload session to update statistics
+      if (sessionId) {
+        const updatedSession = await sessionsAPI.getSession(parseInt(sessionId));
+        setSession(updatedSession);
+      }
+    } catch (err) {
+      console.error('Error processing images:', err);
+      setError('Failed to process some images');
+    } finally {
+      setProcessingAll(false);
+      setProcessProgress({ current: 0, total: 0 });
+    }
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString('en-US', {
       month: 'short',
@@ -127,6 +228,20 @@ const SessionDetailPage: React.FC = () => {
     // Remove '/api' from the end if present
     const baseUrl = API_BASE.replace('/api', '');
     return `${baseUrl}${path.startsWith('/') ? path : '/' + path}`;
+  };
+
+  const handleFaceCropsUpdate = async () => {
+    if (!sessionId) return;
+    try {
+      const faceCropsResponse = await sessionsAPI.getSessionFaceCrops(parseInt(sessionId));
+      setFaceCrops(faceCropsResponse.face_crops);
+      
+      // Also reload images to update face crop counts
+      const imagesData = await imagesAPI.getImages(parseInt(sessionId));
+      setImages(imagesData);
+    } catch (err) {
+      console.error('Failed to reload face crops:', err);
+    }
   };
 
   if (loading) {
@@ -153,6 +268,13 @@ const SessionDetailPage: React.FC = () => {
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
+      {/* Processing Overlay */}
+      <ProcessingOverlay 
+        isProcessing={processingAll} 
+        message="Processing images..." 
+        progress={processProgress.total > 0 ? processProgress : undefined}
+      />
+
       {/* Back Button */}
       <button
         onClick={() => navigate(`/classes/${classId}`)}
@@ -208,21 +330,31 @@ const SessionDetailPage: React.FC = () => {
           <div>
             <h2 className="text-xl font-semibold text-white">Images</h2>
             <p className="text-sm text-gray-400 mt-1">
-              {images.length} / 20 images uploaded
+              {images.length} / 20 images uploaded • {images.filter(img => img.is_processed).length} processed
             </p>
           </div>
-          <label className={`inline-flex items-center justify-center btn-primary px-4 py-2 ${uploading || images.length >= 20 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={handleFileSelect}
-              disabled={uploading || images.length >= 20}
-              className="hidden"
-            />
-            <Upload className="w-4 h-4 mr-2" />
-            {uploading ? 'Uploading...' : 'Upload Images'}
-          </label>
+          <div className="flex gap-2">
+            <Button
+              onClick={handleProcessAllImages}
+              disabled={processingAll || images.filter(img => !img.is_processed).length === 0}
+              variant="secondary"
+            >
+              <Layers className="w-4 h-4 mr-2" />
+              Process All ({images.filter(img => !img.is_processed).length})
+            </Button>
+            <label className={`inline-flex items-center justify-center btn-primary px-4 py-2 ${uploading || images.length >= 20 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleFileSelect}
+                disabled={uploading || images.length >= 20}
+                className="hidden"
+              />
+              <Upload className="w-4 h-4 mr-2" />
+              {uploading ? 'Uploading...' : 'Upload Images'}
+            </label>
+          </div>
         </div>
 
         {error && (
@@ -253,8 +385,11 @@ const SessionDetailPage: React.FC = () => {
                 key={image.id}
                 className="relative group bg-dark-card rounded-lg overflow-hidden border border-dark-border hover:border-primary transition-colors"
               >
-                {/* Image Preview */}
-                <div className="aspect-square bg-dark-bg flex items-center justify-center">
+                {/* Image Preview - Clickable */}
+                <div 
+                  className="aspect-square bg-dark-bg flex items-center justify-center cursor-pointer"
+                  onClick={() => navigate(`/classes/${classId}/sessions/${sessionId}/images/${image.id}`)}
+                >
                   <img
                     src={getImageUrl(image.original_image_path)}
                     alt={`Upload ${image.id}`}
@@ -267,9 +402,9 @@ const SessionDetailPage: React.FC = () => {
                 </div>
 
                 {/* Image Info Overlay */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                  <div className="absolute bottom-0 left-0 right-0 p-3">
-                    <div className="flex items-center justify-between mb-2">
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  <div className="absolute bottom-0 left-0 right-0 p-3 pointer-events-auto">
+                    <div className="flex items-center gap-2 mb-2">
                       {image.is_processed ? (
                         <Badge variant="success" className="text-xs">
                           <CheckCircle className="w-3 h-3 mr-1" />
@@ -281,8 +416,32 @@ const SessionDetailPage: React.FC = () => {
                           Pending
                         </Badge>
                       )}
+                    </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      {!image.is_processed && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleProcessImage(image.id);
+                          }}
+                          disabled={processingImages.has(image.id)}
+                          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-primary hover:bg-primary-dark rounded text-white text-xs transition-colors disabled:opacity-50"
+                        >
+                          {processingImages.has(image.id) ? (
+                            <>Processing...</>
+                          ) : (
+                            <>
+                              <Play className="w-3 h-3" />
+                              Process
+                            </>
+                          )}
+                        </button>
+                      )}
                       <button
-                        onClick={() => openDeleteImageModal(image.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openDeleteImageModal(image.id);
+                        }}
                         className="p-1.5 bg-danger hover:bg-danger-dark rounded text-white transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -313,6 +472,20 @@ const SessionDetailPage: React.FC = () => {
           </div>
         )}
       </Card>
+
+      {/* Face Crops Section */}
+      {showFaceCropsSection && (
+        <Card className="mt-6">
+          <FaceCropsSection
+            faceCrops={faceCrops}
+            students={students}
+            onUpdate={handleFaceCropsUpdate}
+            title="Session Face Crops"
+            description={`All detected faces across ${images.length} image${images.length !== 1 ? 's' : ''}`}
+            showImageInfo={true}
+          />
+        </Card>
+      )}
 
       {/* Delete Image Modal */}
       <Modal

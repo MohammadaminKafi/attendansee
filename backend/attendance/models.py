@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.core.validators import MinLengthValidator
 from django.utils import timezone
+from pgvector.django import VectorField
 
 
 class Class(models.Model):
@@ -131,7 +132,7 @@ class Image(models.Model):
         related_name='images'
     )
     original_image_path = models.ImageField(upload_to='session_images/', max_length=500)
-    processed_image_path = models.ImageField(upload_to='processed_images/', max_length=500, blank=True, null=True)
+    processed_image_path = models.ImageField(upload_to='processed_images/', max_length=500, blank=True, default='')
     upload_date = models.DateTimeField(default=timezone.now)
     is_processed = models.BooleanField(default=False)
     processing_date = models.DateTimeField(null=True, blank=True)
@@ -173,6 +174,15 @@ class FaceCrop(models.Model):
     Represents a face crop detected in an image.
     Can be linked to a student if identified, or remain unidentified.
     """
+    # Embedding model choices
+    EMBEDDING_MODEL_FACENET = 'facenet'
+    EMBEDDING_MODEL_ARCFACE = 'arcface'
+    
+    EMBEDDING_MODEL_CHOICES = [
+        (EMBEDDING_MODEL_FACENET, 'FaceNet (128D)'),
+        (EMBEDDING_MODEL_ARCFACE, 'ArcFace (512D)'),
+    ]
+    
     image = models.ForeignKey(
         'Image',
         on_delete=models.CASCADE,
@@ -196,6 +206,22 @@ class FaceCrop(models.Model):
         help_text='Confidence score for student identification (0-1)'
     )
     is_identified = models.BooleanField(default=False)
+    
+    # Embedding fields for similarity search and clustering
+    embedding = VectorField(
+        dimensions=512,  # Max dimension (ArcFace), FaceNet will use first 128
+        null=True,
+        blank=True,
+        help_text='Face embedding vector for similarity search'
+    )
+    embedding_model = models.CharField(
+        max_length=20,
+        choices=EMBEDDING_MODEL_CHOICES,
+        null=True,
+        blank=True,
+        help_text='Model used to generate the embedding'
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -208,6 +234,7 @@ class FaceCrop(models.Model):
             models.Index(fields=['image', '-created_at']),
             models.Index(fields=['student']),
             models.Index(fields=['is_identified']),
+            models.Index(fields=['embedding_model']),
         ]
     
     def __str__(self):

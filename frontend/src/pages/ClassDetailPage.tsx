@@ -8,6 +8,7 @@ import { Tabs, Tab } from '@/components/ui/Tabs';
 import { StatCard } from '@/components/ui/StatCard';
 import { SessionsTab } from '@/components/tabs/SessionsTab';
 import { StudentsTab } from '@/components/tabs/StudentsTab';
+import { ReportTab } from '@/components/tabs/ReportTab';
 import { ArrowLeft } from 'lucide-react';
 
 export const ClassDetailPage: React.FC = () => {
@@ -22,6 +23,7 @@ export const ClassDetailPage: React.FC = () => {
   const tabs: Tab[] = [
     { id: 'sessions', label: 'Sessions', icon: '📅' },
     { id: 'students', label: 'Students', icon: '👥' },
+    { id: 'report', label: 'Report', icon: '📊' },
   ];
 
   useEffect(() => {
@@ -147,6 +149,9 @@ export const ClassDetailPage: React.FC = () => {
           )}
           {activeTab === 'students' && id && (
             <StudentsTab classId={parseInt(id)} onUpdate={loadClassData} />
+          )}
+          {activeTab === 'report' && id && (
+            <ReportTab classId={parseInt(id)} />
           )}
         </div>
       </div>

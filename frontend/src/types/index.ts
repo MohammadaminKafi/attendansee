@@ -72,6 +72,26 @@ export interface UpdateStudentData {
   email?: string;
 }
 
+export interface MergeStudentData {
+  target_student_id: number;
+}
+
+export interface MergeStudentResponse {
+  status: string;
+  message: string;
+  source_student: {
+    id: number;
+    full_name: string;
+    student_id: string;
+  };
+  target_student: Student;
+  statistics: {
+    face_crops_transferred: number;
+    target_crops_before_merge: number;
+    target_crops_after_merge: number;
+  };
+}
+
 // Session types
 export interface Session {
   id: number;
@@ -128,6 +148,58 @@ export interface CreateImageData {
   original_image_path: File;
 }
 
+export interface ProcessImageData {
+  detector_backend?: 'opencv' | 'ssd' | 'dlib' | 'mtcnn' | 'retinaface' | 'mediapipe' | 'yolov8' | 'yunet';
+  confidence_threshold?: number;
+  apply_background_effect?: boolean;
+  rectangle_color?: [number, number, number];
+  rectangle_thickness?: number;
+}
+
+export interface ProcessImageResponse {
+  status: string;
+  image_id: number;
+  session_id: number;
+  class_id: number;
+  faces_detected: number;
+  crops_created: number[];
+  processed_image_url: string;
+  message: string;
+}
+
+// Face Crop types
+export interface FaceCrop {
+  id: number;
+  image: number;
+  image_id: number;
+  student: number | null;
+  student_name: string | null;
+  crop_image_path: string;
+  coordinates: string;
+  coordinates_dict: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
+  confidence_score: number | null;
+  is_identified: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FaceCropDetail extends FaceCrop {
+  session_id: number;
+  session_name: string;
+  class_id: number;
+  class_name: string;
+}
+
+export interface UpdateFaceCropData {
+  student: number | null;
+  confidence_score?: number;
+}
+
 // Statistics types
 export interface ClassStatistics {
   student_count: number;
@@ -136,6 +208,81 @@ export interface ClassStatistics {
   processed_images: number;
   total_face_crops: number;
   identified_faces: number;
+}
+
+// Student Detail Report types
+export interface StudentSessionDetail {
+  session_id: number;
+  session_name: string;
+  date: string;
+  start_time: string | null;
+  end_time: string | null;
+  was_present: boolean;
+  detection_count: number;
+  face_crops: Array<{
+    id: number;
+    image_id: number;
+    crop_image_path: string;
+    confidence_score: number | null;
+    created_at: string;
+  }>;
+}
+
+export interface StudentDetailReport {
+  student: Student;
+  statistics: {
+    total_sessions: number;
+    attended_sessions: number;
+    missed_sessions: number;
+    attendance_rate: number;
+    total_detections: number;
+  };
+  sessions: StudentSessionDetail[];
+}
+
+// Attendance Report types
+export interface SessionAttendance {
+  session_id: number;
+  present: boolean;
+  detection_count: number;
+}
+
+export interface StudentAttendanceRecord {
+  student_id: number;
+  first_name: string;
+  last_name: string;
+  full_name: string;
+  student_number: string;
+  email: string | null;
+  attended_sessions: number;
+  total_sessions: number;
+  attendance_rate: number;
+  session_attendance: SessionAttendance[];
+}
+
+export interface SessionSummary {
+  id: number;
+  name: string;
+  date: string;
+  start_time: string | null;
+  end_time: string | null;
+  is_processed: boolean;
+  present_count: number;
+  total_students: number;
+  attendance_rate: number;
+}
+
+export interface AttendanceReport {
+  class_id: number;
+  class_name: string;
+  total_students: number;
+  total_sessions: number;
+  date_range: {
+    from: string | null;
+    to: string | null;
+  };
+  sessions: SessionSummary[];
+  attendance_matrix: StudentAttendanceRecord[];
 }
 
 // API Response types

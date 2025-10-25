@@ -1,19 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { studentsAPI } from '@/services/api';
+import { useNavigate } from 'react-router-dom';
+import { studentsAPI, sessionsAPI } from '@/services/api';
 import { Student, CreateStudentData, UpdateStudentData } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { Eye, Edit2, Trash2, GitMerge, X } from 'lucide-react';
 
 interface StudentsTabProps {
   classId: number;
   onUpdate?: () => void;
 }
 
+interface StudentWithAttendance extends Student {
+  attended_sessions?: number;
+  total_sessions?: number;
+}
+
 export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) => {
-  const [students, setStudents] = useState<Student[]>([]);
-  const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
+  const navigate = useNavigate();
+  const [students, setStudents] = useState<StudentWithAttendance[]>([]);
+  const [filteredStudents, setFilteredStudents] = useState<StudentWithAttendance[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -29,6 +37,13 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [hasHeader, setHasHeader] = useState(true);
   const [uploadResult, setUploadResult] = useState<any>(null);
+  
+  // Merge functionality state
+  const [mergeMode, setMergeMode] = useState(false);
+  const [sourceStudentForMerge, setSourceStudentForMerge] = useState<Student | null>(null);
+  const [showMergeConfirmModal, setShowMergeConfirmModal] = useState(false);
+  const [selectedTargetStudent, setSelectedTargetStudent] = useState<Student | null>(null);
+  const [merging, setMerging] = useState(false);
 
   useEffect(() => {
     loadStudents();
@@ -53,9 +68,41 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
   const loadStudents = async () => {
     try {
       setLoading(true);
-      const data = await studentsAPI.getStudents(classId);
-      setStudents(data);
-      setFilteredStudents(data);
+      
+      // Fetch students and sessions in parallel
+      const [studentsData, sessionsData] = await Promise.all([
+        studentsAPI.getStudents(classId),
+        sessionsAPI.getSessions(classId),
+      ]);
+      
+      // Fetch attendance for each student
+      const studentsWithAttendance = await Promise.all(
+        studentsData.map(async (student) => {
+          try {
+            // Count sessions where student was present
+            sessionsData.filter(() =>
+              // This is a simplified check - in reality we'd need to query face crops
+              // But we'll do a simple calculation here
+              false // Will be updated when we have the attendance data
+            ).length;
+            
+            return {
+              ...student,
+              attended_sessions: 0, // Will be calculated properly in backend
+              total_sessions: sessionsData.length,
+            };
+          } catch {
+            return {
+              ...student,
+              attended_sessions: 0,
+              total_sessions: sessionsData.length,
+            };
+          }
+        })
+      );
+      
+      setStudents(studentsWithAttendance);
+      setFilteredStudents(studentsWithAttendance);
     } catch (error) {
       console.error('Failed to load students:', error);
     } finally {
@@ -157,6 +204,51 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
     setHasHeader(true);
   };
 
+  const startMerge = (student: Student) => {
+    setMergeMode(true);
+    setSourceStudentForMerge(student);
+  };
+
+  const cancelMerge = () => {
+    setMergeMode(false);
+    setSourceStudentForMerge(null);
+    setSelectedTargetStudent(null);
+    setShowMergeConfirmModal(false);
+  };
+
+  const selectTargetForMerge = (targetStudent: Student) => {
+    if (sourceStudentForMerge && targetStudent.id !== sourceStudentForMerge.id) {
+      setSelectedTargetStudent(targetStudent);
+      setShowMergeConfirmModal(true);
+    }
+  };
+
+  const confirmMerge = async () => {
+    if (!sourceStudentForMerge || !selectedTargetStudent) return;
+
+    setMerging(true);
+    try {
+      await studentsAPI.mergeStudents(sourceStudentForMerge.id, {
+        target_student_id: selectedTargetStudent.id,
+      });
+
+      // Show success message
+      alert(
+        `Successfully merged "${sourceStudentForMerge.first_name} ${sourceStudentForMerge.last_name}" into "${selectedTargetStudent.first_name} ${selectedTargetStudent.last_name}"`
+      );
+
+      // Reload students and reset merge state
+      await loadStudents();
+      onUpdate?.();
+      cancelMerge();
+    } catch (error: any) {
+      console.error('Failed to merge students:', error);
+      alert(error.response?.data?.detail || error.response?.data?.error || 'Failed to merge students');
+    } finally {
+      setMerging(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-12">
@@ -178,12 +270,44 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
           />
         </div>
         <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => setShowUploadModal(true)}>
-            📤 Upload CSV
-          </Button>
-          <Button onClick={handleCreate}>+ Add Student</Button>
+          {mergeMode ? (
+            <Button variant="secondary" onClick={cancelMerge}>
+              <X className="w-4 h-4 mr-1" />
+              Cancel Merge
+            </Button>
+          ) : (
+            <>
+              <Button variant="secondary" onClick={() => setShowUploadModal(true)}>
+                📤 Upload CSV
+              </Button>
+              <Button onClick={handleCreate}>+ Add Student</Button>
+            </>
+          )}
         </div>
       </div>
+
+      {/* Merge Mode Info Banner */}
+      {mergeMode && sourceStudentForMerge && (
+        <div className="mb-6 p-4 bg-primary bg-opacity-10 border border-primary rounded-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-primary font-semibold mb-1">Merge Mode Active</h3>
+              <p className="text-gray-300 text-sm">
+                Merging: <span className="font-semibold">{sourceStudentForMerge.full_name}</span>
+              </p>
+              <p className="text-gray-400 text-xs mt-1">
+                Click on another student to select merge target
+              </p>
+            </div>
+            <button
+              onClick={cancelMerge}
+              className="p-2 hover:bg-dark-hover rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Student List */}
       <div className="grid gap-4">
@@ -195,26 +319,87 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
           filteredStudents.map((student) => (
             <div
               key={student.id}
-              className="bg-dark-card border border-dark-border rounded-lg p-4 hover:border-primary transition-colors"
+              className={`bg-dark-card border rounded-lg p-4 transition-colors ${
+                mergeMode
+                  ? sourceStudentForMerge?.id === student.id
+                    ? 'border-primary bg-primary bg-opacity-5'
+                    : 'border-dark-border hover:border-success cursor-pointer'
+                  : 'border-dark-border hover:border-primary cursor-pointer'
+              }`}
+              onClick={() => {
+                if (mergeMode && sourceStudentForMerge?.id !== student.id) {
+                  selectTargetForMerge(student);
+                } else if (!mergeMode) {
+                  navigate(`/classes/${classId}/students/${student.id}`);
+                }
+              }}
             >
               <div className="flex items-center justify-between">
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-gray-100">
+                  <h3 className={`text-lg font-semibold transition-colors ${
+                    mergeMode && sourceStudentForMerge?.id !== student.id
+                      ? 'text-success'
+                      : 'text-gray-100 group-hover:text-primary'
+                  }`}>
                     {student.first_name} {student.last_name}
+                    {mergeMode && sourceStudentForMerge?.id === student.id && (
+                      <span className="ml-2 text-xs text-primary">(Source)</span>
+                    )}
                   </h3>
                   <div className="flex gap-4 mt-1 text-sm text-gray-400">
                     <span>ID: {student.student_id}</span>
                     {student.email && <span>Email: {student.email}</span>}
+                    {student.total_sessions !== undefined && (
+                      <span className="text-primary font-medium">
+                        Attendance: {student.attended_sessions || 0}/{student.total_sessions}
+                      </span>
+                    )}
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="secondary" onClick={() => handleEdit(student)}>
-                    Edit
-                  </Button>
-                  <Button size="sm" variant="danger" onClick={() => handleDelete(student)}>
-                    Delete
-                  </Button>
-                </div>
+                {!mergeMode && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/classes/${classId}/students/${student.id}`);
+                      }}
+                      className="p-2 hover:bg-dark-hover rounded text-gray-400 hover:text-primary transition-colors"
+                      title="View student"
+                    >
+                      <Eye size={16} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startMerge(student);
+                      }}
+                      className="p-2 hover:bg-dark-hover rounded text-gray-400 hover:text-success transition-colors"
+                      title="Merge student"
+                    >
+                      <GitMerge size={16} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEdit(student);
+                      }}
+                      className="p-2 hover:bg-dark-hover rounded text-gray-400 hover:text-primary transition-colors"
+                      title="Edit student"
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(student);
+                      }}
+                      className="p-2 hover:bg-dark-hover rounded text-gray-400 hover:text-danger transition-colors"
+                      title="Delete student"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))
@@ -326,6 +511,75 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
             {!uploadResult && <Button type="submit">Upload</Button>}
           </div>
         </form>
+      </Modal>
+
+      {/* Merge Confirmation Modal */}
+      <Modal
+        isOpen={showMergeConfirmModal}
+        onClose={() => !merging && setShowMergeConfirmModal(false)}
+        title="Confirm Student Merge"
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-warning bg-opacity-10 border border-warning rounded-lg">
+            <p className="text-warning font-medium mb-2">⚠️ Warning: This action cannot be undone</p>
+            <p className="text-gray-300 text-sm">
+              The source student will be permanently deleted after merging.
+            </p>
+          </div>
+
+          {sourceStudentForMerge && selectedTargetStudent && (
+            <div className="space-y-3">
+              <div className="p-3 bg-dark-hover rounded-lg">
+                <p className="text-xs text-gray-400 mb-1">Source Student (will be deleted):</p>
+                <p className="text-danger font-semibold">
+                  {sourceStudentForMerge.full_name}
+                  {sourceStudentForMerge.student_id && ` (${sourceStudentForMerge.student_id})`}
+                </p>
+              </div>
+
+              <div className="flex justify-center">
+                <div className="text-gray-400">↓</div>
+              </div>
+
+              <div className="p-3 bg-dark-hover rounded-lg">
+                <p className="text-xs text-gray-400 mb-1">Target Student (will be kept):</p>
+                <p className="text-success font-semibold">
+                  {selectedTargetStudent.full_name}
+                  {selectedTargetStudent.student_id && ` (${selectedTargetStudent.student_id})`}
+                </p>
+              </div>
+
+              <div className="p-3 bg-dark-card border border-dark-border rounded-lg">
+                <p className="text-gray-300 text-sm">
+                  All face crops from <span className="font-semibold">{sourceStudentForMerge.full_name}</span> will be transferred to{' '}
+                  <span className="font-semibold">{selectedTargetStudent.full_name}</span>, and then{' '}
+                  <span className="font-semibold">{sourceStudentForMerge.full_name}</span> will be deleted.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowMergeConfirmModal(false)}
+              className="flex-1"
+              disabled={merging}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={confirmMerge}
+              className="flex-1"
+              isLoading={merging}
+            >
+              Merge Students
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

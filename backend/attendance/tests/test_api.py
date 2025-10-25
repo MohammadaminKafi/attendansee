@@ -446,18 +446,28 @@ class TestImageAPI:
     
     def test_create_image(self, authenticated_client, user):
         """Test creating an image."""
+        from io import BytesIO
+        from PIL import Image as PILImage
+        
         test_class = Class.objects.create(owner=user, name='CS 101')
         session = Session.objects.create(class_session=test_class, name='Week 1', date=date.today())
+        
+        # Create a temporary image file
+        image_file = BytesIO()
+        pil_image = PILImage.new('RGB', (100, 100), color='red')
+        pil_image.save(image_file, 'JPEG')
+        image_file.seek(0)
+        image_file.name = 'test_image.jpg'
         
         url = reverse('attendance:image-list')
         data = {
             'session': session.id,
-            'original_image_path': '/uploads/new_image.jpg'
+            'original_image_path': image_file
         }
-        response = authenticated_client.post(url, data, format='json')
+        response = authenticated_client.post(url, data, format='multipart')
         
         assert response.status_code == status.HTTP_201_CREATED
-        assert response.data['original_image_path'] == '/uploads/new_image.jpg'
+        assert 'test_image' in response.data['original_image_path']
         assert response.data['is_processed'] is False
     
     def test_delete_image(self, authenticated_client, user):
@@ -484,7 +494,8 @@ class TestImageAPI:
         
         assert response.status_code == status.HTTP_200_OK
         assert response.data['is_processed'] is True
-        assert response.data['processed_image_path'] == '/processed/img1.jpg'
+        # ImageField returns full URL including domain, not just the path
+        assert '/processed/img1.jpg' in response.data['processed_image_path']
     
     def test_get_image_face_crops(self, authenticated_client, user):
         """Test getting face crops for an image."""

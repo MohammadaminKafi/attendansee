@@ -466,19 +466,38 @@ class ProcessImageSerializer(serializers.Serializer):
     This endpoint will process an image to extract face crops.
     """
     # Optional parameters for processing configuration
-    min_face_size = serializers.IntegerField(
-        default=20,
-        min_value=10,
-        max_value=500,
+    detector_backend = serializers.ChoiceField(
+        choices=['opencv', 'ssd', 'dlib', 'mtcnn', 'retinaface', 'mediapipe', 'yolov8', 'yunet'],
+        default='retinaface',
         required=False,
-        help_text="Minimum face size in pixels"
+        help_text="Backend to use for face detection"
     )
     confidence_threshold = serializers.FloatField(
-        default=0.5,
+        default=0.0,
         min_value=0.0,
         max_value=1.0,
         required=False,
-        help_text="Confidence threshold for face detection"
+        help_text="Minimum confidence threshold for face detection (0-1)"
+    )
+    apply_background_effect = serializers.BooleanField(
+        default=True,
+        required=False,
+        help_text="Whether to apply grayscale/shadow to background"
+    )
+    rectangle_color = serializers.ListField(
+        child=serializers.IntegerField(min_value=0, max_value=255),
+        default=[0, 255, 0],
+        required=False,
+        min_length=3,
+        max_length=3,
+        help_text="BGR color tuple for face rectangles [B, G, R]"
+    )
+    rectangle_thickness = serializers.IntegerField(
+        default=2,
+        min_value=1,
+        max_value=10,
+        required=False,
+        help_text="Thickness of rectangle borders in pixels"
     )
 
 
@@ -535,3 +554,164 @@ class AggregateClassSerializer(serializers.Serializer):
             )
         
         return data
+
+
+class MergeStudentSerializer(serializers.Serializer):
+    """
+    Serializer for merging two students.
+    The source student (the one being merged from) will be deleted after
+    all face crops are transferred to the target student.
+    """
+    target_student_id = serializers.IntegerField(
+        required=True,
+        help_text="ID of the student to merge into (this student will be kept)"
+    )
+    
+    def validate_target_student_id(self, value):
+        """
+        Validate that the target student exists.
+        """
+        if not Student.objects.filter(id=value).exists():
+            raise serializers.ValidationError(
+                f"Student with ID {value} does not exist"
+            )
+        return value
+    
+    def validate(self, data):
+        """
+        Validate the merge operation.
+        Ensures:
+        - Source and target are different students
+        - Both students belong to the same class
+        - User has permission to merge (validated in view)
+        """
+        # Get source student from context (will be set by the view)
+        source_student = self.context.get('source_student')
+        if not source_student:
+            raise serializers.ValidationError("Source student not provided")
+        
+        target_student_id = data['target_student_id']
+        
+        # Check if trying to merge student with itself
+        if source_student.id == target_student_id:
+            raise serializers.ValidationError(
+                "Cannot merge a student with itself"
+            )
+        
+        # Get target student
+        try:
+            target_student = Student.objects.get(id=target_student_id)
+        except Student.DoesNotExist:
+            raise serializers.ValidationError(
+                f"Target student with ID {target_student_id} does not exist"
+            )
+        
+        # Check if both students belong to the same class
+        if source_student.class_enrolled_id != target_student.class_enrolled_id:
+            raise serializers.ValidationError(
+                "Students must belong to the same class to be merged"
+            )
+        
+        # Add target student to validated data for convenience
+        data['target_student'] = target_student
+        
+        return data
+
+
+class GenerateEmbeddingSerializer(serializers.Serializer):
+    """
+    Serializer for generating face embeddings for face crops.
+    """
+    face_crop_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        help_text="List of FaceCrop IDs to generate embeddings for"
+    )
+    model_name = serializers.ChoiceField(
+        choices=['facenet', 'arcface'],
+        default='facenet',
+        required=False,
+        help_text="Embedding model to use (facenet: 128D, arcface: 512D)"
+    )
+    force_regenerate = serializers.BooleanField(
+        default=False,
+        required=False,
+        help_text="Force regeneration even if embedding already exists"
+    )
+
+
+class ClusterFaceCropsSerializer(serializers.Serializer):
+    """
+    Serializer for clustering face crops in a session or class.
+    """
+    max_clusters = serializers.IntegerField(
+        default=50,
+        min_value=1,
+        max_value=200,
+        required=False,
+        help_text="Maximum number of clusters to create"
+    )
+    similarity_threshold = serializers.FloatField(
+        default=0.5,
+        min_value=0.0,
+        max_value=1.0,
+        required=False,
+        help_text="Similarity threshold for grouping faces (0-1)"
+    )
+    embedding_model = serializers.ChoiceField(
+        choices=['facenet', 'arcface'],
+        default='facenet',
+        required=False,
+        help_text="Embedding model to use"
+    )
+    create_students = serializers.BooleanField(
+        default=True,
+        required=False,
+        help_text="Create Student records for each cluster"
+    )
+    assign_crops = serializers.BooleanField(
+        default=True,
+        required=False,
+        help_text="Assign face crops to created students"
+    )
+    include_identified = serializers.BooleanField(
+        default=False,
+        required=False,
+        help_text="Include already identified crops (class-level only)"
+    )
+
+
+class AssignFaceCropSerializer(serializers.Serializer):
+    """
+    Serializer for assigning face crops to students using KNN.
+    """
+    k = serializers.IntegerField(
+        default=5,
+        min_value=1,
+        max_value=20,
+        required=False,
+        help_text="Number of nearest neighbors to consider"
+    )
+    similarity_threshold = serializers.FloatField(
+        default=0.6,
+        min_value=0.0,
+        max_value=1.0,
+        required=False,
+        help_text="Minimum similarity threshold for assignment"
+    )
+    embedding_model = serializers.ChoiceField(
+        choices=['facenet', 'arcface'],
+        default='facenet',
+        required=False,
+        help_text="Embedding model to use"
+    )
+    use_voting = serializers.BooleanField(
+        default=True,
+        required=False,
+        help_text="Use majority voting in KNN (vs. best match)"
+    )
+    auto_commit = serializers.BooleanField(
+        default=True,
+        required=False,
+        help_text="Automatically save assignments to database"
+    )
