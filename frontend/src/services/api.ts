@@ -361,6 +361,46 @@ export const faceCropsAPI = {
   deleteFaceCrop: async (id: number): Promise<void> => {
     await api.delete(`/attendance/face-crops/${id}/`);
   },
+
+  generateEmbedding: async (
+    id: number,
+    modelName: 'facenet' | 'arcface' | 'facenet512' = 'facenet'
+  ): Promise<{
+    status: string;
+    message: string;
+    face_crop_id: number;
+    model_name: string;
+    embedding_dimension: number;
+    embedding_preview: number[];
+    has_embedding: boolean;
+  }> => {
+    const response = await api.post(`/attendance/face-crops/${id}/generate-embedding/`, {
+      model_name: modelName,
+    });
+    return response.data;
+  },
+
+  assignCrop: async (
+    id: number,
+    options?: {
+      k?: number;
+      similarity_threshold?: number;
+      embedding_model?: 'facenet' | 'arcface' | 'facenet512';
+      use_voting?: boolean;
+      auto_commit?: boolean;
+    }
+  ): Promise<{
+    status: string;
+    crop_id: number;
+    assigned: boolean;
+    student_id?: number;
+    student_name?: string;
+    confidence?: number;
+    message: string;
+  }> => {
+    const response = await api.post(`/attendance/face-crops/${id}/assign/`, options || {});
+    return response.data;
+  },
 };
 
 export default api;

@@ -439,7 +439,8 @@ const ImageDetailPage: React.FC = () => {
             {sortFaceCrops(faceCrops).map((crop) => (
               <div
                 key={crop.id}
-                className="relative group bg-dark-card rounded-lg overflow-hidden border border-dark-border hover:border-primary transition-colors"
+                className="relative group bg-dark-card rounded-lg overflow-hidden border border-dark-border hover:border-primary transition-colors cursor-pointer"
+                onClick={() => navigate(`/classes/${classId}/sessions/${sessionId}/images/${imageId}/crops/${crop.id}`)}
               >
                 {/* Face Crop Image */}
                 <div className="aspect-square bg-dark-bg flex items-center justify-center">
@@ -482,7 +483,10 @@ const ImageDetailPage: React.FC = () => {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => openEditStudentModal(crop)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditStudentModal(crop);
+                        }}
                         className="w-full"
                       >
                         <Edit2 className="w-3 h-3 mr-1" />
@@ -491,7 +495,10 @@ const ImageDetailPage: React.FC = () => {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => handleUnassignStudent(crop.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUnassignStudent(crop.id);
+                        }}
                         className="w-full"
                       >
                         <UserX className="w-3 h-3 mr-1" />
@@ -501,7 +508,8 @@ const ImageDetailPage: React.FC = () => {
                   ) : (
                     <Button
                       size="sm"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setAssigningCropId(crop.id);
                         setShowAssignModal(true);
                       }}
@@ -514,7 +522,8 @@ const ImageDetailPage: React.FC = () => {
                   <Button
                     size="sm"
                     variant="danger"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setDeletingCropId(crop.id);
                       setShowDeleteCropModal(true);
                     }}

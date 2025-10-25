@@ -184,6 +184,7 @@ export interface FaceCrop {
   } | null;
   confidence_score: number | null;
   is_identified: boolean;
+  embedding_model: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -9,7 +9,7 @@ export default {
       colors: {
         dark: {
           bg: '#080e08',      // Very dark background
-          card: '#0e180e',    // Slightly lighter for cards
+          card: '#1d271d',    // Slightly lighter for cards
           hover: '#283028',   // Hover state
           border: '#283828',  // Subtle borders
           light: '#388838',   // Lighter elements

@@ -9,6 +9,7 @@ import { ClassDetailPage } from '@/pages/ClassDetailPage';
 import SessionDetailPage from '@/pages/SessionDetailPage';
 import ImageDetailPage from '@/pages/ImageDetailPage';
 import StudentDetailPage from '@/pages/StudentDetailPage';
+import FaceCropDetailPage from '@/pages/FaceCropDetailPage';
 
 const App: React.FC = () => {
   return (
@@ -31,6 +32,7 @@ const App: React.FC = () => {
             <Route path="/classes/:classId/students/:studentId" element={<StudentDetailPage />} />
             <Route path="/classes/:classId/sessions/:sessionId" element={<SessionDetailPage />} />
             <Route path="/classes/:classId/sessions/:sessionId/images/:imageId" element={<ImageDetailPage />} />
+            <Route path="/classes/:classId/sessions/:sessionId/images/:imageId/crops/:cropId" element={<FaceCropDetailPage />} />
             <Route path="/" element={<Navigate to="/classes" replace />} />
           </Route>
 

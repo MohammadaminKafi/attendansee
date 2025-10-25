@@ -621,98 +621,16 @@ class MergeStudentSerializer(serializers.Serializer):
 
 class GenerateEmbeddingSerializer(serializers.Serializer):
     """
-    Serializer for generating face embeddings for face crops.
+    Serializer for generating face embeddings.
     """
-    face_crop_ids = serializers.ListField(
-        child=serializers.IntegerField(),
-        required=False,
-        help_text="List of FaceCrop IDs to generate embeddings for"
-    )
     model_name = serializers.ChoiceField(
-        choices=['facenet', 'arcface'],
-        default='facenet',
-        required=False,
-        help_text="Embedding model to use (facenet: 128D, arcface: 512D)"
+        choices=['arcface', 'facenet', 'facenet512'],
+        default='arcface',
+        help_text='Model to use for embedding generation'
     )
-    force_regenerate = serializers.BooleanField(
-        default=False,
-        required=False,
-        help_text="Force regeneration even if embedding already exists"
-    )
+    
+    def validate_model_name(self, value):
+        """Ensure model name is lowercase."""
+        return value.lower()
 
 
-class ClusterFaceCropsSerializer(serializers.Serializer):
-    """
-    Serializer for clustering face crops in a session or class.
-    """
-    max_clusters = serializers.IntegerField(
-        default=50,
-        min_value=1,
-        max_value=200,
-        required=False,
-        help_text="Maximum number of clusters to create"
-    )
-    similarity_threshold = serializers.FloatField(
-        default=0.5,
-        min_value=0.0,
-        max_value=1.0,
-        required=False,
-        help_text="Similarity threshold for grouping faces (0-1)"
-    )
-    embedding_model = serializers.ChoiceField(
-        choices=['facenet', 'arcface'],
-        default='facenet',
-        required=False,
-        help_text="Embedding model to use"
-    )
-    create_students = serializers.BooleanField(
-        default=True,
-        required=False,
-        help_text="Create Student records for each cluster"
-    )
-    assign_crops = serializers.BooleanField(
-        default=True,
-        required=False,
-        help_text="Assign face crops to created students"
-    )
-    include_identified = serializers.BooleanField(
-        default=False,
-        required=False,
-        help_text="Include already identified crops (class-level only)"
-    )
-
-
-class AssignFaceCropSerializer(serializers.Serializer):
-    """
-    Serializer for assigning face crops to students using KNN.
-    """
-    k = serializers.IntegerField(
-        default=5,
-        min_value=1,
-        max_value=20,
-        required=False,
-        help_text="Number of nearest neighbors to consider"
-    )
-    similarity_threshold = serializers.FloatField(
-        default=0.6,
-        min_value=0.0,
-        max_value=1.0,
-        required=False,
-        help_text="Minimum similarity threshold for assignment"
-    )
-    embedding_model = serializers.ChoiceField(
-        choices=['facenet', 'arcface'],
-        default='facenet',
-        required=False,
-        help_text="Embedding model to use"
-    )
-    use_voting = serializers.BooleanField(
-        default=True,
-        required=False,
-        help_text="Use majority voting in KNN (vs. best match)"
-    )
-    auto_commit = serializers.BooleanField(
-        default=True,
-        required=False,
-        help_text="Automatically save assignments to database"
-    )
