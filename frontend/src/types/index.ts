@@ -185,6 +185,7 @@ export interface FaceCrop {
   confidence_score: number | null;
   is_identified: boolean;
   embedding_model: string | null;
+  embedding: number[] | null;
   created_at: string;
   updated_at: string;
 }

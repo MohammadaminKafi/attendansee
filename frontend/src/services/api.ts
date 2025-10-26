@@ -364,7 +364,7 @@ export const faceCropsAPI = {
 
   generateEmbedding: async (
     id: number,
-    modelName: 'facenet' | 'arcface' | 'facenet512' = 'facenet'
+    modelName: 'arcface' | 'facenet512' = 'arcface'
   ): Promise<{
     status: string;
     message: string;
@@ -385,7 +385,7 @@ export const faceCropsAPI = {
     options?: {
       k?: number;
       similarity_threshold?: number;
-      embedding_model?: 'facenet' | 'arcface' | 'facenet512';
+      embedding_model?: 'arcface' | 'facenet512';
       use_voting?: boolean;
       auto_commit?: boolean;
     }

@@ -161,19 +161,20 @@ class FaceCropSerializer(serializers.ModelSerializer):
     image_id = serializers.ReadOnlyField(source='image.id')
     student_name = serializers.ReadOnlyField(source='student.full_name')
     coordinates_dict = serializers.SerializerMethodField()
+    embedding = serializers.ListField(child=serializers.FloatField(), read_only=True)
     
     class Meta:
         model = FaceCrop
         fields = [
             'id', 'image', 'image_id', 'student', 'student_name',
             'crop_image_path', 'coordinates', 'coordinates_dict',
-            'confidence_score', 'is_identified', 'embedding_model',
+            'confidence_score', 'is_identified', 'embedding_model', 'embedding',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'image', 'image_id', 'crop_image_path', 'coordinates',
             'confidence_score', 'is_identified', 'created_at', 'updated_at',
-            'student_name', 'coordinates_dict', 'embedding_model'
+            'student_name', 'coordinates_dict', 'embedding_model', 'embedding'
         ]
     
     def get_coordinates_dict(self, obj):

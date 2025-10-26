@@ -175,12 +175,12 @@ class FaceCrop(models.Model):
     Can be linked to a student if identified, or remain unidentified.
     """
     # Embedding model choices
-    EMBEDDING_MODEL_FACENET = 'facenet'
     EMBEDDING_MODEL_ARCFACE = 'arcface'
+    EMBEDDING_MODEL_FACENET512 = 'facenet512'
     
     EMBEDDING_MODEL_CHOICES = [
-        (EMBEDDING_MODEL_FACENET, 'FaceNet (128D)'),
         (EMBEDDING_MODEL_ARCFACE, 'ArcFace (512D)'),
+        (EMBEDDING_MODEL_FACENET512, 'FaceNet512 (512D)'),
     ]
     
     image = models.ForeignKey(

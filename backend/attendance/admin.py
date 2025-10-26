@@ -699,10 +699,12 @@ class FaceCropAdmin(admin.ModelAdmin):
         'student_link',
         'is_identified_display',
         'confidence_display',
+        'embedding_model_display',
         'created_at_display'
     ]
     list_filter = [
         'is_identified',
+        'embedding_model',
         ConfidenceScoreFilter,
         'created_at',
         'image__session__class_session',
@@ -720,7 +722,9 @@ class FaceCropAdmin(admin.ModelAdmin):
         'created_at',
         'updated_at',
         'coordinates_display',
-        'crop_preview'
+        'crop_preview',
+        'embedding_model',
+        'embedding_info_display'
     ]
     date_hierarchy = 'created_at'
     list_per_page = 100
@@ -731,6 +735,10 @@ class FaceCropAdmin(admin.ModelAdmin):
         }),
         ('Identification', {
             'fields': ('student', 'is_identified', 'confidence_score')
+        }),
+        ('Embedding Information', {
+            'fields': ('embedding_model', 'embedding_info_display'),
+            'classes': ('collapse',)
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
@@ -791,6 +799,45 @@ class FaceCropAdmin(admin.ModelAdmin):
         return '-'
     confidence_display.short_description = 'Confidence'
     confidence_display.admin_order_field = 'confidence_score'
+    
+    def embedding_model_display(self, obj):
+        """Display embedding model with icon."""
+        if obj.embedding_model:
+            model_names = {
+                'facenet': 'FaceNet (128D)',
+                'arcface': 'ArcFace (512D)',
+                'facenet512': 'FaceNet512 (512D)',
+            }
+            display_name = model_names.get(obj.embedding_model, obj.embedding_model)
+            return format_html('<span style="color: #3b82f6;">✓ {}</span>', display_name)
+        return format_html('<span style="color: gray;">✗ No embedding</span>')
+    embedding_model_display.short_description = 'Embedding Model'
+    embedding_model_display.admin_order_field = 'embedding_model'
+    
+    def embedding_info_display(self, obj):
+        """Display embedding information."""
+        if obj.embedding and obj.embedding_model:
+            # Get embedding dimensions based on model
+            dimensions = {
+                'facenet': 128,
+                'arcface': 512,
+                'facenet512': 512,
+            }
+            dim = dimensions.get(obj.embedding_model, len(obj.embedding) if obj.embedding else 0)
+            
+            # Show first few values
+            if obj.embedding:
+                preview = ', '.join([f'{v:.4f}' for v in obj.embedding[:5]])
+                return format_html(
+                    '<div><strong>Model:</strong> {}<br/>'
+                    '<strong>Dimensions:</strong> {}<br/>'
+                    '<strong>Preview:</strong> [{}, ...]</div>',
+                    obj.get_embedding_model_display() if hasattr(obj, 'get_embedding_model_display') else obj.embedding_model,
+                    dim,
+                    preview
+                )
+        return 'No embedding generated'
+    embedding_info_display.short_description = 'Embedding Details'
     
     def coordinates_display(self, obj):
         """Display parsed coordinates."""

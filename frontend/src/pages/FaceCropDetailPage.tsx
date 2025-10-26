@@ -39,16 +39,17 @@ const FaceCropDetailPage: React.FC = () => {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [showFullEmbedding, setShowFullEmbedding] = useState(false);
 
   // Modal states
   const [showEmbeddingModal, setShowEmbeddingModal] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<'facenet' | 'arcface' | 'facenet512'>('arcface');
+  const [selectedModel, setSelectedModel] = useState<'arcface' | 'facenet512'>('arcface');
 
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignOptions, setAssignOptions] = useState({
     k: 5,
     similarity_threshold: 0.6,
-    embedding_model: 'facenet' as 'facenet' | 'arcface' | 'facenet512',
+    embedding_model: 'arcface' as 'arcface' | 'facenet512',
     use_voting: true,
   });
 
@@ -156,8 +157,6 @@ const FaceCropDetailPage: React.FC = () => {
   const getModelDisplayName = (modelName: string | null) => {
     if (!modelName) return 'Not generated';
     switch (modelName) {
-      case 'facenet':
-        return 'FaceNet (128D)';
       case 'arcface':
         return 'ArcFace (512D)';
       case 'facenet512':
@@ -345,6 +344,48 @@ const FaceCropDetailPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Embedding Vector */}
+            {crop.embedding && crop.embedding.length > 0 && (
+              <div className="flex items-start gap-3 p-3 bg-dark-hover rounded-lg">
+                <Hash className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-400 mb-2">Embedding Vector</p>
+                  <div className="bg-dark-bg rounded p-3 font-mono text-xs">
+                    {showFullEmbedding ? (
+                      <div className="space-y-1">
+                        <p className="text-gray-400 mb-2">
+                          {crop.embedding.length} dimensions:
+                        </p>
+                        <div className="max-h-64 overflow-y-auto">
+                          <p className="text-primary break-all">
+                            [{crop.embedding.map(v => v.toFixed(6)).join(', ')}]
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setShowFullEmbedding(false)}
+                          className="text-primary hover:text-primary-light text-xs mt-2"
+                        >
+                          Show less
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-primary">
+                          [{crop.embedding.slice(0, 10).map(v => v.toFixed(6)).join(', ')}, ...]
+                        </p>
+                        <button
+                          onClick={() => setShowFullEmbedding(true)}
+                          className="text-primary hover:text-primary-light text-xs mt-2"
+                        >
+                          Show full vector ({crop.embedding.length} dimensions)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Created Date */}
             <div className="flex items-start gap-3 p-3 bg-dark-hover rounded-lg">
               <Calendar className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
@@ -398,24 +439,6 @@ const FaceCropDetailPage: React.FC = () => {
               Embedding Model
             </label>
             <div className="space-y-2">
-              <button
-                onClick={() => setSelectedModel('facenet')}
-                className={`w-full p-4 rounded-lg border transition-colors text-left ${
-                  selectedModel === 'facenet'
-                    ? 'border-primary bg-primary/10'
-                    : 'border-dark-border hover:border-gray-600 bg-dark-hover'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-white font-medium">FaceNet (128D)</p>
-                  {selectedModel === 'facenet' && (
-                    <CheckCircle className="w-5 h-5 text-primary" />
-                  )}
-                </div>
-                <p className="text-xs text-gray-400">
-                  Faster processing, lower memory usage. Good for most use cases.
-                </p>
-              </button>
               <button
                 onClick={() => setSelectedModel('arcface')}
                 className={`w-full p-4 rounded-lg border transition-colors text-left ${
@@ -577,12 +600,11 @@ const FaceCropDetailPage: React.FC = () => {
                 onChange={(e) =>
                   setAssignOptions({
                     ...assignOptions,
-                    embedding_model: e.target.value as 'facenet' | 'arcface' | 'facenet512',
+                    embedding_model: e.target.value as 'arcface' | 'facenet512',
                   })
                 }
                 className="w-full px-3 py-2 bg-dark-bg border border-dark-border rounded-lg text-white focus:outline-none focus:border-primary"
               >
-                <option value="facenet">FaceNet (128D)</option>
                 <option value="arcface">ArcFace (512D)</option>
                 <option value="facenet512">FaceNet512 (512D)</option>
               </select>

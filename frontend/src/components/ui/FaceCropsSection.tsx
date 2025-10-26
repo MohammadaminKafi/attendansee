@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { faceCropsAPI, studentsAPI } from '@/services/api';
 import { FaceCropDetail, Student } from '@/types';
 import { Button } from '@/components/ui/Button';
@@ -39,6 +40,7 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
   showImageInfo = false,
 }) => {
   // State
+  const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('created-desc');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -196,7 +198,8 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
   const renderCropCard = (crop: FaceCropDetail, showImage: boolean = false) => (
     <div
       key={crop.id}
-      className="relative group bg-dark-card rounded-lg overflow-hidden border border-dark-border hover:border-primary transition-colors"
+      className="relative group bg-dark-card rounded-lg overflow-hidden border border-dark-border hover:border-primary transition-colors cursor-pointer"
+      onClick={() => navigate(`/classes/${crop.class_id}/sessions/${crop.session_id}/images/${crop.image_id}/crops/${crop.id}`)}
     >
       {/* Face Crop Image */}
       <div className="aspect-square bg-dark-bg flex items-center justify-center">
@@ -243,7 +246,10 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => openEditStudentModal(crop)}
+              onClick={(e) => {
+                e.stopPropagation();
+                openEditStudentModal(crop);
+              }}
               className="w-full"
             >
               <Edit2 className="w-3 h-3 mr-1" />
@@ -252,7 +258,10 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => handleUnassignStudent(crop.id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleUnassignStudent(crop.id);
+              }}
               className="w-full"
             >
               <UserX className="w-3 h-3 mr-1" />
@@ -262,7 +271,8 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
         ) : (
           <Button
             size="sm"
-            onClick={() => {
+            onClick={(e) => {
+              e.stopPropagation();
               setAssigningCropId(crop.id);
               setShowAssignModal(true);
             }}
@@ -275,7 +285,8 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
         <Button
           size="sm"
           variant="danger"
-          onClick={() => {
+          onClick={(e) => {
+            e.stopPropagation();
             setDeletingCropId(crop.id);
             setShowDeleteCropModal(true);
           }}
