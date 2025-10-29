@@ -264,6 +264,7 @@ const SessionDetailPage: React.FC = () => {
 
     try {
       setGeneratingEmbeddings(true);
+      setShowEmbeddingModal(false); // Close modal immediately to show progress bar
       setError(null);
 
       // Determine which crops need embeddings
@@ -294,7 +295,6 @@ const SessionDetailPage: React.FC = () => {
         setSession(updatedSession);
       }
       setTimeout(() => {
-        setShowEmbeddingModal(false);
         setEmbeddingProgressText(null);
         setEmbeddingProgress({ current: 0, total: 0 });
       }, 1500);

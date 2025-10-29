@@ -804,7 +804,6 @@ class FaceCropAdmin(admin.ModelAdmin):
         """Display embedding model with icon."""
         if obj.embedding_model:
             model_names = {
-                'facenet': 'FaceNet (128D)',
                 'arcface': 'ArcFace (512D)',
                 'facenet512': 'FaceNet512 (512D)',
             }
@@ -819,7 +818,6 @@ class FaceCropAdmin(admin.ModelAdmin):
         if obj.embedding and obj.embedding_model:
             # Get embedding dimensions based on model
             dimensions = {
-                'facenet': 128,
                 'arcface': 512,
                 'facenet512': 512,
             }

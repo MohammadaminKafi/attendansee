@@ -15,8 +15,15 @@ class FaceAggregator:
     - otherwise create a new person folder
     """
 
-    def __init__(self, model_name: str = "Facenet", distance_metric: str = "cosine", threshold: float = 0.4):
-        self.model_name = model_name
+    def __init__(self, model_name: str = "ArcFace", distance_metric: str = "cosine", threshold: float = 0.4):
+        # Allow only 512D models
+        name_map = {
+            'ArcFace': 'ArcFace',
+            'Facenet512': 'Facenet512',
+            'arcface': 'ArcFace',
+            'facenet512': 'Facenet512',
+        }
+        self.model_name = name_map.get(model_name, 'ArcFace')
         self.distance_metric = distance_metric
         self.threshold = threshold
         self.known_embeddings: List[np.ndarray] = []

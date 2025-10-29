@@ -209,7 +209,7 @@ class FaceCrop(models.Model):
     
     # Embedding fields for similarity search and clustering
     embedding = VectorField(
-        dimensions=512,  # Max dimension (ArcFace), FaceNet will use first 128
+        dimensions=512,  # 512D only (ArcFace or FaceNet512)
         null=True,
         blank=True,
         help_text='Face embedding vector for similarity search'

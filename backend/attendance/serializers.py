@@ -173,6 +173,33 @@ class ImageSerializer(serializers.ModelSerializer):
         return value
 
 
+class ImageCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating Image instances via multipart upload.
+    Accepts the uploaded file in 'original_image_path'.
+    """
+    original_image_path = serializers.ImageField(write_only=True)
+
+    class Meta:
+        model = Image
+        fields = [
+            'id', 'session', 'original_image_path', 'upload_date',
+        ]
+        read_only_fields = ['id', 'upload_date']
+
+    def validate_session(self, value):
+        """
+        Ensure the user owns the class for the session.
+        """
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            if value.class_session.owner != request.user:
+                raise serializers.ValidationError(
+                    "You can only upload images to sessions in your own classes."
+                )
+        return value
+
+
 class FaceCropSerializer(serializers.ModelSerializer):
     """
     Serializer for FaceCrop model.
@@ -655,7 +682,7 @@ class GenerateEmbeddingSerializer(serializers.Serializer):
     Serializer for generating face embeddings.
     """
     model_name = serializers.ChoiceField(
-        choices=['arcface', 'facenet', 'facenet512'],
+        choices=['arcface', 'facenet512'],
         default='arcface',
         help_text='Model to use for embedding generation'
     )
@@ -670,7 +697,7 @@ class BulkGenerateEmbeddingsSerializer(serializers.Serializer):
     Serializer for bulk generating embeddings for face crops.
     """
     model_name = serializers.ChoiceField(
-        choices=['arcface', 'facenet', 'facenet512'],
+        choices=['arcface', 'facenet512'],
         default='arcface',
         help_text='Model to use for embedding generation'
     )

@@ -2,7 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db.models import Count, Q
 from django.utils import timezone
 import os
@@ -1376,6 +1376,8 @@ class ImageViewSet(viewsets.ModelViewSet):
     serializer_class = ImageSerializer
     permission_classes = [IsAuthenticated, IsClassOwnerOrAdmin]
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    # Accept JSON for actions like process-image, and multipart for create
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
     
     def get_queryset(self):
         """
@@ -1407,6 +1409,28 @@ class ImageViewSet(viewsets.ModelViewSet):
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
+
+    def get_serializer_class(self):
+        """
+        Use a dedicated serializer for create to accept multipart file uploads.
+        """
+        from .serializers import ImageCreateSerializer, ImageSerializer as ReadSerializer
+        if self.action == 'create':
+            return ImageCreateSerializer
+        return ReadSerializer
+
+    def create(self, request, *args, **kwargs):
+        """
+        Override create to return the read serializer payload with absolute URLs
+        after saving the uploaded file.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        image = serializer.save()
+        # Re-serialize with read serializer for URL fields
+        read_serializer = ImageSerializer(image, context={'request': request})
+        headers = self.get_success_headers(read_serializer.data)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
     
     @action(detail=True, methods=['get'])
     def face_crops(self, request, pk=None):
@@ -1601,7 +1625,7 @@ class FaceCropViewSet(viewsets.ModelViewSet):
         and saves it to the face crop model along with the model name.
         
         Parameters:
-        - model_name: Model to use ('arcface', 'facenet', or 'facenet512')
+    - model_name: Model to use ('arcface' or 'facenet512')
                      Default: 'arcface'
         
         Returns:

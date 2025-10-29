@@ -130,6 +130,7 @@ export const ClassDetailPage: React.FC = () => {
 
     try {
       setGeneratingEmbeddings(true);
+      setShowEmbeddingModal(false); // Close modal immediately to show progress bar
       setError('');
 
       // Gather all crops without embeddings across the class
@@ -162,7 +163,6 @@ export const ClassDetailPage: React.FC = () => {
 
       await loadClassData();
       setTimeout(() => {
-        setShowEmbeddingModal(false);
         setEmbeddingProgress({ current: 0, total: 0 });
       }, 1500);
     } catch (err: any) {

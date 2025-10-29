@@ -251,3 +251,16 @@ Run with coverage:
 ```bash
 pytest --cov=attendance --cov-report=html
 ```
+
+---
+
+## Embeddings
+
+This app generates face embeddings using DeepFace. Only 512-dimensional models are supported:
+
+- arcface → ArcFace (512D)
+- facenet512 → FaceNet512 (512D)
+
+Notes:
+- 128D FaceNet is not supported anymore. Existing records that were generated with a 128D model remain readable but are considered deprecated.
+- Embedding vectors are stored in a pgvector field with 512 dimensions and are used for similarity search and clustering.
