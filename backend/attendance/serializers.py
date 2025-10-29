@@ -122,6 +122,8 @@ class ImageSerializer(serializers.ModelSerializer):
     session_name = serializers.ReadOnlyField(source='session.name')
     class_name = serializers.ReadOnlyField(source='session.class_session.name')
     face_crop_count = serializers.SerializerMethodField()
+    original_image_path = serializers.SerializerMethodField()
+    processed_image_path = serializers.SerializerMethodField()
     
     class Meta:
         model = Image
@@ -135,6 +137,24 @@ class ImageSerializer(serializers.ModelSerializer):
             'id', 'upload_date', 'is_processed', 'processing_date',
             'created_at', 'updated_at', 'session_name', 'class_name'
         ]
+    
+    def get_original_image_path(self, obj):
+        """Return the URL for the original image."""
+        if obj.original_image_path:
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(obj.original_image_path.url)
+            return obj.original_image_path.url
+        return None
+    
+    def get_processed_image_path(self, obj):
+        """Return the URL for the processed image."""
+        if obj.processed_image_path:
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(obj.processed_image_path.url)
+            return obj.processed_image_path.url
+        return None
     
     def get_face_crop_count(self, obj):
         """Return the number of face crops in the image."""
@@ -162,6 +182,7 @@ class FaceCropSerializer(serializers.ModelSerializer):
     student_name = serializers.ReadOnlyField(source='student.full_name')
     coordinates_dict = serializers.SerializerMethodField()
     embedding = serializers.ListField(child=serializers.FloatField(), read_only=True)
+    crop_image_path = serializers.SerializerMethodField()
     
     class Meta:
         model = FaceCrop
@@ -176,6 +197,15 @@ class FaceCropSerializer(serializers.ModelSerializer):
             'confidence_score', 'is_identified', 'created_at', 'updated_at',
             'student_name', 'coordinates_dict', 'embedding_model', 'embedding'
         ]
+    
+    def get_crop_image_path(self, obj):
+        """Return the URL for the crop image."""
+        if obj.crop_image_path:
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(obj.crop_image_path.url)
+            return obj.crop_image_path.url
+        return None
     
     def get_coordinates_dict(self, obj):
         """Return parsed coordinates as a dictionary."""
@@ -633,5 +663,94 @@ class GenerateEmbeddingSerializer(serializers.Serializer):
     def validate_model_name(self, value):
         """Ensure model name is lowercase."""
         return value.lower()
+
+
+class BulkGenerateEmbeddingsSerializer(serializers.Serializer):
+    """
+    Serializer for bulk generating embeddings for face crops.
+    """
+    model_name = serializers.ChoiceField(
+        choices=['arcface', 'facenet', 'facenet512'],
+        default='arcface',
+        help_text='Model to use for embedding generation'
+    )
+    process_unprocessed_images = serializers.BooleanField(
+        default=False,
+        help_text='Whether to process unprocessed images before generating embeddings'
+    )
+    detector_backend = serializers.ChoiceField(
+        choices=['opencv', 'ssd', 'dlib', 'mtcnn', 'retinaface', 'mediapipe', 'yolov8', 'yunet'],
+        default='retinaface',
+        help_text='Detector backend to use for image processing'
+    )
+    confidence_threshold = serializers.FloatField(
+        default=0.5,
+        min_value=0.0,
+        max_value=1.0,
+        help_text='Confidence threshold for face detection'
+    )
+    apply_background_effect = serializers.BooleanField(
+        default=True,
+        help_text='Whether to apply background effect to processed images'
+    )
+    
+    def validate_model_name(self, value):
+        """Ensure model name is lowercase."""
+        return value.lower()
+
+
+class BulkProcessImagesSerializer(serializers.Serializer):
+    """
+    Serializer for bulk processing images.
+    """
+    detector_backend = serializers.ChoiceField(
+        choices=['opencv', 'ssd', 'dlib', 'mtcnn', 'retinaface', 'mediapipe', 'yolov8', 'yunet'],
+        default='retinaface',
+        help_text='Detector backend to use for image processing'
+    )
+    confidence_threshold = serializers.FloatField(
+        default=0.5,
+        min_value=0.0,
+        max_value=1.0,
+        help_text='Confidence threshold for face detection'
+    )
+    apply_background_effect = serializers.BooleanField(
+        default=True,
+        help_text='Whether to apply background effect to processed images'
+    )
+    rectangle_color = serializers.ListField(
+        child=serializers.IntegerField(min_value=0, max_value=255),
+        min_length=3,
+        max_length=3,
+        default=[0, 255, 0],
+        help_text='RGB color for face rectangles [R, G, B]'
+    )
+    rectangle_thickness = serializers.IntegerField(
+        default=2,
+        min_value=1,
+        help_text='Thickness of face rectangles'
+    )
+
+
+class ClusterCropsSerializer(serializers.Serializer):
+    """
+    Serializer for clustering face crops in a session.
+    """
+    max_clusters = serializers.IntegerField(
+        default=10,
+        min_value=2,
+        max_value=200,
+        help_text='Maximum number of clusters to create'
+    )
+    force_clustering = serializers.BooleanField(
+        default=False,
+        help_text='If True, force all crops into clusters; if False, allow outliers'
+    )
+    similarity_threshold = serializers.FloatField(
+        default=0.7,
+        min_value=0.0,
+        max_value=1.0,
+        help_text='Minimum similarity for cluster membership (0-1)'
+    )
 
 

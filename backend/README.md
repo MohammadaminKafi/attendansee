@@ -71,10 +71,18 @@ uv run python manage.py createsuperuser
 ### 6. Run Development Server
 
 ```bash
+# For local development (WSL/Linux only)
 uv run python manage.py runserver
+
+# For WSL with Windows access (bind to all interfaces)
+uv run python manage.py runserver 0.0.0.0:8000
 ```
 
-The API will be available at `http://localhost:8000/`
+**Important for WSL users:** When running Django in WSL and accessing from Windows, use `0.0.0.0:8000` to bind to all network interfaces. This makes the server accessible from Windows at `http://localhost:8000/` or `http://<WSL-IP>:8000/`.
+
+The API will be available at:
+- From WSL: `http://localhost:8000/` or `http://127.0.0.1:8000/`
+- From Windows (when using `0.0.0.0:8000`): `http://localhost:8000/`
 
 ## Testing
 

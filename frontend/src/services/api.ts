@@ -23,9 +23,17 @@ import type {
   ProcessImageResponse,
   StudentDetailReport,
   AttendanceReport,
+  BulkProcessImagesData,
+  BulkProcessImagesResponse,
+  GenerateEmbeddingsData,
+  GenerateEmbeddingsResponse,
+  ClusterCropsData,
+  ClusterCropsResponse,
 } from '@/types';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+// Single source of truth for API base URL: runtime env injected by docker-entrypoint
+const runtimeEnv = (typeof window !== 'undefined') ? (window as any)._env_ : undefined;
+const API_BASE_URL = (runtimeEnv?.VITE_API_BASE_URL as string) || 'http://localhost:8000/api';
 
 // Create axios instance
 const api: AxiosInstance = axios.create({
@@ -61,12 +69,12 @@ api.interceptors.request.use(
     }
     return config;
   },
-  (error) => Promise.reject(error)
+  (error: any) => Promise.reject(error)
 );
 
 // Response interceptor to handle token refresh
 api.interceptors.response.use(
-  (response) => response,
+  (response: any) => response,
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
@@ -183,6 +191,39 @@ export const classesAPI = {
     });
     return response.data;
   },
+
+  processAllImages: async (
+    id: number,
+    options?: BulkProcessImagesData
+  ): Promise<BulkProcessImagesResponse> => {
+    const response = await api.post<BulkProcessImagesResponse>(
+      `/attendance/classes/${id}/process-all-images/`,
+      options || {}
+    );
+    return response.data;
+  },
+
+  generateEmbeddings: async (
+    id: number,
+    options?: GenerateEmbeddingsData
+  ): Promise<GenerateEmbeddingsResponse> => {
+    const response = await api.post<GenerateEmbeddingsResponse>(
+      `/attendance/classes/${id}/generate-embeddings/`,
+      options || {}
+    );
+    return response.data;
+  },
+
+  clusterCrops: async (
+    classId: number,
+    options?: ClusterCropsData
+  ): Promise<ClusterCropsResponse> => {
+    const response = await api.post<ClusterCropsResponse>(
+      `/attendance/classes/${classId}/cluster-crops/`,
+      options || {}
+    );
+    return response.data;
+  },
 };
 
 // Sessions API
@@ -228,6 +269,28 @@ export const sessionsAPI = {
     face_crops: FaceCropDetail[];
   }> => {
     const response = await api.get(`/attendance/sessions/${sessionId}/face-crops/`, { params });
+    return response.data;
+  },
+
+  generateEmbeddings: async (
+    sessionId: number,
+    options?: GenerateEmbeddingsData
+  ): Promise<GenerateEmbeddingsResponse> => {
+    const response = await api.post<GenerateEmbeddingsResponse>(
+      `/attendance/sessions/${sessionId}/generate-embeddings/`,
+      options || {}
+    );
+    return response.data;
+  },
+
+  clusterCrops: async (
+    sessionId: number,
+    options?: ClusterCropsData
+  ): Promise<ClusterCropsResponse> => {
+    const response = await api.post<ClusterCropsResponse>(
+      `/attendance/sessions/${sessionId}/cluster-crops/`,
+      options || {}
+    );
     return response.data;
   },
 };
@@ -399,6 +462,47 @@ export const faceCropsAPI = {
     message: string;
   }> => {
     const response = await api.post(`/attendance/face-crops/${id}/assign/`, options || {});
+    return response.data;
+  },
+
+  getSimilarFaces: async (
+    id: number,
+    params?: { k?: number; include_unidentified?: boolean; embedding_model?: 'arcface' | 'facenet512' }
+  ): Promise<{
+    crop_id: number;
+    k: number;
+    embedding_model: string | null;
+    neighbors: Array<{
+      crop_id: number;
+      student_id: number | null;
+      student_name: string | null;
+      similarity: number;
+      distance: number | null;
+      crop_image_path: string;
+      is_identified: boolean;
+    }>;
+  }> => {
+    const response = await api.get(`/attendance/face-crops/${id}/similar-faces/`, { params });
+    return response.data;
+  },
+
+  assignFromCandidate: async (
+    id: number,
+    candidateCropId: number,
+    confidence?: number
+  ): Promise<{
+    status: string;
+    crop_id: number;
+    assigned: boolean;
+    student_id?: number;
+    student_name?: string;
+    confidence?: number;
+    message?: string;
+  }> => {
+    const response = await api.post(`/attendance/face-crops/${id}/assign-from-candidate/`, {
+      candidate_crop_id: candidateCropId,
+      confidence,
+    });
     return response.data;
   },
 };

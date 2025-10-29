@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { sessionsAPI, imagesAPI, classesAPI, studentsAPI } from '@/services/api';
+import { sessionsAPI, imagesAPI, classesAPI, studentsAPI, faceCropsAPI } from '@/services/api';
 import { Session, Image, Class, FaceCropDetail, Student } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { ProcessingOverlay } from '@/components/ui/ProcessingSpinner';
 import { FaceCropsSection } from '@/components/ui/FaceCropsSection';
-import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers } from 'lucide-react';
+import { EmbeddingGenerationModal, EmbeddingGenerationOptions, ClusteringModal, ClusteringOptions } from '@/components/ui';
+import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users } from 'lucide-react';
 
 const SessionDetailPage: React.FC = () => {
   const { classId, sessionId } = useParams<{ classId: string; sessionId: string }>();
@@ -31,6 +32,18 @@ const SessionDetailPage: React.FC = () => {
   const [processingImages, setProcessingImages] = useState<Set<number>>(new Set());
   const [processingAll, setProcessingAll] = useState(false);
   const [processProgress, setProcessProgress] = useState({ current: 0, total: 0 });
+
+  // Embedding generation states
+  const [showEmbeddingModal, setShowEmbeddingModal] = useState(false);
+  const [generatingEmbeddings, setGeneratingEmbeddings] = useState(false);
+  const [embeddingProgressText, setEmbeddingProgressText] = useState<string | null>(null);
+  const [embeddingProgress, setEmbeddingProgress] = useState<{current: number; total: number}>({ current: 0, total: 0 });
+
+  // Clustering states
+  const [showClusteringModal, setShowClusteringModal] = useState(false);
+  const [clusteringInProgress, setClusteringInProgress] = useState(false);
+  const [clusteringResult, setClusteringResult] = useState<any>(null);
+  const [showClusteringResultModal, setShowClusteringResultModal] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -219,15 +232,17 @@ const SessionDetailPage: React.FC = () => {
   };
 
   const getImageUrl = (path: string) => {
-    // If path is already a full URL, return it
+    if (!path) return '';
+    // Backend now returns absolute URLs, use them directly
     if (path.startsWith('http://') || path.startsWith('https://')) {
       return path;
     }
-    // Otherwise, construct URL from API base
+    // Fallback for relative paths (shouldn't happen with updated serializer)
     const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-    // Remove '/api' from the end if present
     const baseUrl = API_BASE.replace('/api', '');
-    return `${baseUrl}${path.startsWith('/') ? path : '/' + path}`;
+    // Ensure path starts with /
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    return `${baseUrl}${normalizedPath}`;
   };
 
   const handleFaceCropsUpdate = async () => {
@@ -241,6 +256,88 @@ const SessionDetailPage: React.FC = () => {
       setImages(imagesData);
     } catch (err) {
       console.error('Failed to reload face crops:', err);
+    }
+  };
+
+  const handleGenerateEmbeddings = async (options: EmbeddingGenerationOptions) => {
+    if (!sessionId) return;
+
+    try {
+      setGeneratingEmbeddings(true);
+      setError(null);
+
+      // Determine which crops need embeddings
+      const cropsToProcess = faceCrops.filter(c => !c.embedding_model).map(c => c.id);
+      if (cropsToProcess.length === 0) {
+        setEmbeddingProgressText('All face crops already have embeddings');
+        setTimeout(() => setEmbeddingProgressText(null), 1500);
+        return;
+      }
+      setEmbeddingProgress({ current: 0, total: cropsToProcess.length });
+
+      let done = 0;
+      for (const cropId of cropsToProcess) {
+        try {
+          await faceCropsAPI.generateEmbedding(cropId, options.model_name || 'arcface');
+        } catch (e) {
+          // continue on error
+        } finally {
+          done += 1;
+          setEmbeddingProgress({ current: done, total: cropsToProcess.length });
+        }
+      }
+
+      setEmbeddingProgressText(`Generated embeddings for ${done} / ${cropsToProcess.length} crops`);
+      await handleFaceCropsUpdate();
+      if (sessionId) {
+        const updatedSession = await sessionsAPI.getSession(parseInt(sessionId));
+        setSession(updatedSession);
+      }
+      setTimeout(() => {
+        setShowEmbeddingModal(false);
+        setEmbeddingProgressText(null);
+        setEmbeddingProgress({ current: 0, total: 0 });
+      }, 1500);
+    } catch (err: any) {
+      console.error('Error generating embeddings:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to generate embeddings';
+      setError(errorMsg);
+      setEmbeddingProgressText(null);
+      setEmbeddingProgress({ current: 0, total: 0 });
+    } finally {
+      setGeneratingEmbeddings(false);
+    }
+  };
+
+  const handleClusterCrops = async (options: ClusteringOptions) => {
+    if (!sessionId) return;
+
+    try {
+      setClusteringInProgress(true);
+      setError(null);
+      setShowClusteringModal(false);
+
+      const result = await sessionsAPI.clusterCrops(parseInt(sessionId), options);
+      
+      setClusteringResult(result);
+      setShowClusteringResultModal(true);
+
+      // Reload face crops and students
+      await handleFaceCropsUpdate();
+      if (classId) {
+        const studentsData = await studentsAPI.getStudents(parseInt(classId));
+        setStudents(studentsData);
+      }
+      if (sessionId) {
+        const updatedSession = await sessionsAPI.getSession(parseInt(sessionId));
+        setSession(updatedSession);
+      }
+    } catch (err: any) {
+      console.error('Error clustering face crops:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to cluster face crops';
+      setError(errorMsg);
+    } finally {
+      setClusteringInProgress(false);
     }
   };
 
@@ -476,15 +573,168 @@ const SessionDetailPage: React.FC = () => {
       {/* Face Crops Section */}
       {showFaceCropsSection && (
         <Card className="mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-semibold text-white">Session Face Crops</h2>
+              <p className="text-sm text-gray-400 mt-1">
+                All detected faces across {images.length} image{images.length !== 1 ? 's' : ''}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={() => setShowEmbeddingModal(true)}
+                variant="primary"
+                disabled={faceCrops.length === 0}
+              >
+                <Sparkles className="w-4 h-4 mr-2" />
+                Generate Embeddings
+              </Button>
+              <Button
+                onClick={() => setShowClusteringModal(true)}
+                variant="secondary"
+                disabled={faceCrops.length === 0 || clusteringInProgress}
+              >
+                <Users className="w-4 h-4 mr-2" />
+                Cluster Faces
+              </Button>
+              <span className="text-sm text-gray-400">
+                {faceCrops.filter(c => !c.embedding_model).length} / {faceCrops.length} need embeddings
+              </span>
+            </div>
+          </div>
           <FaceCropsSection
             faceCrops={faceCrops}
             students={students}
             onUpdate={handleFaceCropsUpdate}
-            title="Session Face Crops"
-            description={`All detected faces across ${images.length} image${images.length !== 1 ? 's' : ''}`}
+            title=""
+            description=""
             showImageInfo={true}
           />
         </Card>
+      )}
+
+      {/* Embedding Generation Progress */}
+      {(generatingEmbeddings || embeddingProgressText) && (
+        <ProcessingOverlay 
+          isProcessing={true} 
+          message={embeddingProgressText || 'Generating embeddings...'} 
+          progress={embeddingProgress.total > 0 ? embeddingProgress : undefined}
+        />
+      )}
+
+      {/* Embedding Generation Modal */}
+      <EmbeddingGenerationModal
+        isOpen={showEmbeddingModal}
+        onClose={() => setShowEmbeddingModal(false)}
+        onGenerate={handleGenerateEmbeddings}
+        isProcessing={generatingEmbeddings}
+        unprocessedImagesCount={images.filter(img => !img.is_processed).length}
+        title="Generate Session Embeddings"
+        description="Generate embeddings for all face crops in this session to enable face recognition and matching."
+      />
+
+      {/* Clustering Progress */}
+      {clusteringInProgress && (
+        <ProcessingOverlay 
+          isProcessing={true} 
+          message="Clustering face crops..." 
+        />
+      )}
+
+      {/* Clustering Modal */}
+      <ClusteringModal
+        isOpen={showClusteringModal}
+        onClose={() => setShowClusteringModal(false)}
+        onCluster={handleClusterCrops}
+        isProcessing={clusteringInProgress}
+        cropsWithoutEmbeddings={faceCrops.filter(c => !c.embedding_model).length}
+        title="Cluster Face Crops"
+        description="Automatically group similar face crops into clusters and create students for each cluster."
+      />
+
+      {/* Clustering Result Modal */}
+      {clusteringResult && (
+        <Modal
+          isOpen={showClusteringResultModal}
+          onClose={() => {
+            setShowClusteringResultModal(false);
+            setClusteringResult(null);
+          }}
+          title="Clustering Complete"
+        >
+          <div className="space-y-4">
+            <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
+              <p className="text-success font-medium mb-2">Successfully clustered face crops!</p>
+            </div>
+
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between py-2 border-b border-dark-border">
+                <span className="text-gray-400">Total Face Crops:</span>
+                <span className="text-white font-medium">{clusteringResult.total_face_crops}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-dark-border">
+                <span className="text-gray-400">Crops with Embeddings:</span>
+                <span className="text-white font-medium">{clusteringResult.crops_with_embeddings}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-dark-border">
+                <span className="text-gray-400">Clusters Created:</span>
+                <span className="text-white font-medium">{clusteringResult.clusters_created}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-dark-border">
+                <span className="text-gray-400">Students Created:</span>
+                <span className="text-white font-medium">{clusteringResult.students_created}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-dark-border">
+                <span className="text-gray-400">Crops Assigned:</span>
+                <span className="text-white font-medium">{clusteringResult.crops_assigned}</span>
+              </div>
+              {clusteringResult.outliers > 0 && (
+                <div className="flex justify-between py-2 border-b border-dark-border">
+                  <span className="text-gray-400">Outliers (Unassigned):</span>
+                  <span className="text-warning font-medium">{clusteringResult.outliers}</span>
+                </div>
+              )}
+            </div>
+
+            {clusteringResult.student_names && clusteringResult.student_names.length > 0 && (
+              <div>
+                <p className="text-sm text-gray-400 mb-2">Created Students:</p>
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {clusteringResult.student_names.map((name: string, idx: number) => (
+                    <div key={idx} className="text-sm text-white bg-dark-hover px-3 py-2 rounded">
+                      {name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-4">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setShowClusteringResultModal(false);
+                  setClusteringResult(null);
+                }}
+                className="flex-1"
+              >
+                Close
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowClusteringResultModal(false);
+                  setClusteringResult(null);
+                  if (classId) {
+                    navigate(`/classes/${classId}`);
+                  }
+                }}
+                className="flex-1"
+              >
+                View Class
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {/* Delete Image Modal */}
@@ -519,7 +769,7 @@ const SessionDetailPage: React.FC = () => {
               onClick={handleDelete}
               className="flex-1"
             >
-              Delete Image
+              Delete
             </Button>
           </div>
         </div>

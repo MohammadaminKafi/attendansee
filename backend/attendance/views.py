@@ -12,7 +12,7 @@ from .serializers import (
     ImageSerializer, FaceCropSerializer, FaceCropDetailSerializer,
     BulkStudentUploadSerializer, ProcessImageSerializer,
     AggregateCropsSerializer, AggregateClassSerializer, MergeStudentSerializer,
-    GenerateEmbeddingSerializer
+    GenerateEmbeddingSerializer, ClusterCropsSerializer
 )
 from .permissions import IsOwnerOrAdmin, IsClassOwnerOrAdmin
 
@@ -70,21 +70,31 @@ class ClassViewSet(viewsets.ModelViewSet):
         """
         class_obj = self.get_object()
         
+        # Get total and processed images
+        total_images = Image.objects.filter(session__class_session=class_obj).count()
+        processed_images = Image.objects.filter(
+            session__class_session=class_obj,
+            is_processed=True
+        ).count()
+        
+        # Get face crop counts
+        all_face_crops = FaceCrop.objects.filter(
+            image__session__class_session=class_obj
+        )
+        total_face_crops = all_face_crops.count()
+        crops_with_embeddings = all_face_crops.filter(embedding__isnull=False).count()
+        crops_without_embeddings = all_face_crops.filter(embedding__isnull=True).count()
+        
         stats = {
             'student_count': class_obj.students.count(),
             'session_count': class_obj.sessions.count(),
-            'total_images': Image.objects.filter(session__class_session=class_obj).count(),
-            'processed_images': Image.objects.filter(
-                session__class_session=class_obj,
-                is_processed=True
-            ).count(),
-            'total_face_crops': FaceCrop.objects.filter(
-                image__session__class_session=class_obj
-            ).count(),
-            'identified_faces': FaceCrop.objects.filter(
-                image__session__class_session=class_obj,
-                is_identified=True
-            ).count(),
+            'total_images': total_images,
+            'processed_images': processed_images,
+            'unprocessed_images_count': total_images - processed_images,
+            'total_face_crops': total_face_crops,
+            'crops_with_embeddings': crops_with_embeddings,
+            'crops_without_embeddings': crops_without_embeddings,
+            'identified_faces': all_face_crops.filter(is_identified=True).count(),
         }
         
         return Response(stats)
@@ -377,6 +387,297 @@ class ClassViewSet(viewsets.ModelViewSet):
             'sessions': session_summary,
             'attendance_matrix': attendance_matrix
         })
+    
+    @action(detail=True, methods=['post'], url_path='process-all-images')
+    def process_all_images(self, request, pk=None):
+        """
+        Process all unprocessed images in the class.
+        
+        This endpoint processes all unprocessed images across all sessions
+        in the class using the specified face detection parameters.
+        
+        Parameters:
+        - detector_backend: Detector to use (default: 'retinaface')
+        - confidence_threshold: Detection confidence threshold (default: 0.5)
+        - apply_background_effect: Apply background effect (default: true)
+        - rectangle_color: RGB color for rectangles (default: [0, 255, 0])
+        - rectangle_thickness: Rectangle thickness (default: 2)
+        
+        Returns:
+        - Total images found
+        - Images processed
+        - Images failed
+        - Total faces detected
+        """
+        from attendance.utils import process_image_with_face_detection
+        from attendance.serializers import BulkProcessImagesSerializer
+        
+        class_obj = self.get_object()
+        
+        # Validate request data
+        serializer = BulkProcessImagesSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get processing parameters
+        detector_backend = serializer.validated_data.get('detector_backend', 'retinaface')
+        confidence_threshold = serializer.validated_data.get('confidence_threshold', 0.5)
+        apply_background_effect = serializer.validated_data.get('apply_background_effect', True)
+        rectangle_color = tuple(serializer.validated_data.get('rectangle_color', [0, 255, 0]))
+        rectangle_thickness = serializer.validated_data.get('rectangle_thickness', 2)
+        
+        # Get all unprocessed images in the class
+        unprocessed_images = Image.objects.filter(
+            session__class_session=class_obj,
+            is_processed=False
+        )
+        
+        if not unprocessed_images.exists():
+            return Response({
+                'status': 'completed',
+                'message': 'No unprocessed images found in this class',
+                'total_images': 0,
+                'processed_count': 0,
+                'failed_count': 0,
+                'total_faces_detected': 0
+            })
+        
+        # Process each image
+        processed_count = 0
+        failed_count = 0
+        total_faces = 0
+        errors = []
+        
+        for image in unprocessed_images:
+            try:
+                result = process_image_with_face_detection(
+                    image_obj=image,
+                    detector_backend=detector_backend,
+                    min_confidence=confidence_threshold,
+                    apply_background_effect=apply_background_effect,
+                    rectangle_color=rectangle_color,
+                    rectangle_thickness=rectangle_thickness
+                )
+                processed_count += 1
+                total_faces += result['faces_detected']
+            except Exception as e:
+                failed_count += 1
+                errors.append({
+                    'image_id': image.id,
+                    'session_id': image.session.id,
+                    'error': str(e)
+                })
+        
+        return Response({
+            'status': 'completed',
+            'class_id': class_obj.id,
+            'class_name': class_obj.name,
+            'total_images': unprocessed_images.count(),
+            'processed_count': processed_count,
+            'failed_count': failed_count,
+            'total_faces_detected': total_faces,
+            'errors': errors if errors else None
+        })
+    
+    @action(detail=True, methods=['post'], url_path='generate-embeddings')
+    def generate_embeddings(self, request, pk=None):
+        """
+        Generate embeddings for all face crops in the class.
+        
+        This endpoint generates embeddings for all face crops across all
+        sessions in the class. If process_unprocessed_images is true and
+        there are unprocessed images, it will process them first.
+        
+        Parameters:
+        - model_name: Embedding model ('arcface', 'facenet512') (default: 'arcface')
+        - process_unprocessed_images: Process unprocessed images first (default: false)
+        - detector_backend: Detector to use if processing images (default: 'retinaface')
+        - confidence_threshold: Detection confidence (default: 0.5)
+        - apply_background_effect: Apply background effect (default: true)
+        
+        Returns:
+        - Total crops found
+        - Embeddings generated
+        - Embeddings failed
+        - Images processed (if process_unprocessed_images=true)
+        """
+        from attendance.services import EmbeddingService
+        from attendance.utils import process_image_with_face_detection
+        from attendance.serializers import BulkGenerateEmbeddingsSerializer
+        
+        class_obj = self.get_object()
+        
+        # Validate request data
+        serializer = BulkGenerateEmbeddingsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get parameters
+        model_name = serializer.validated_data.get('model_name', 'arcface')
+        process_unprocessed = serializer.validated_data.get('process_unprocessed_images', False)
+        detector_backend = serializer.validated_data.get('detector_backend', 'retinaface')
+        confidence_threshold = serializer.validated_data.get('confidence_threshold', 0.5)
+        apply_background_effect = serializer.validated_data.get('apply_background_effect', True)
+        
+        # Check for unprocessed images
+        unprocessed_images = Image.objects.filter(
+            session__class_session=class_obj,
+            is_processed=False
+        )
+        
+        images_processed = 0
+        
+        if unprocessed_images.exists():
+            if not process_unprocessed:
+                return Response({
+                    'error': 'Class has unprocessed images',
+                    'unprocessed_count': unprocessed_images.count(),
+                    'message': 'Set process_unprocessed_images=true to process them first'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Process unprocessed images first
+            for image in unprocessed_images:
+                try:
+                    process_image_with_face_detection(
+                        image_obj=image,
+                        detector_backend=detector_backend,
+                        min_confidence=confidence_threshold,
+                        apply_background_effect=apply_background_effect,
+                        rectangle_color=(0, 255, 0),
+                        rectangle_thickness=2
+                    )
+                    images_processed += 1
+                except Exception as e:
+                    # Continue processing other images
+                    pass
+        
+        # Get all face crops in the class
+        all_face_crops = FaceCrop.objects.filter(
+            image__session__class_session=class_obj
+        )
+        
+        # Only process crops without embeddings
+        face_crops = all_face_crops.filter(embedding__isnull=True)
+        
+        crops_with_embeddings = all_face_crops.filter(embedding__isnull=False).count()
+        
+        if not face_crops.exists():
+            return Response({
+                'status': 'completed',
+                'message': 'All face crops already have embeddings',
+                'total_crops': all_face_crops.count(),
+                'crops_with_embeddings': crops_with_embeddings,
+                'crops_without_embeddings': 0,
+                'embeddings_generated': 0,
+                'embeddings_failed': 0,
+                'images_processed': images_processed
+            })
+        
+        # Generate embeddings
+        generated_count = 0
+        failed_count = 0
+        errors = []
+        
+        for crop in face_crops:
+            crop_image_path = crop.crop_image_path.path if crop.crop_image_path else None
+            
+            if not crop_image_path or not os.path.exists(crop_image_path):
+                failed_count += 1
+                continue
+            
+            try:
+                embedding = EmbeddingService.generate_embedding(
+                    image_path=crop_image_path,
+                    model_name=model_name
+                )
+                
+                if embedding is not None:
+                    crop.embedding = embedding
+                    crop.embedding_model = model_name
+                    crop.save(update_fields=['embedding', 'embedding_model', 'updated_at'])
+                    generated_count += 1
+                else:
+                    failed_count += 1
+            except Exception as e:
+                failed_count += 1
+                errors.append({
+                    'crop_id': crop.id,
+                    'error': str(e)
+                })
+        
+        return Response({
+            'status': 'completed',
+            'class_id': class_obj.id,
+            'class_name': class_obj.name,
+            'model_name': model_name,
+            'total_crops': all_face_crops.count(),
+            'crops_with_embeddings': crops_with_embeddings,
+            'crops_without_embeddings': face_crops.count(),
+            'embeddings_generated': generated_count,
+            'embeddings_failed': failed_count,
+            'images_processed': images_processed,
+            'errors': errors[:10] if errors else None  # Limit to first 10 errors
+        })
+
+    @action(detail=True, methods=['post'], url_path='cluster-crops')
+    def cluster_crops(self, request, pk=None):
+        """
+        Cluster face crops across all sessions in this class based on embedding similarity.
+        Creates new Student instances for each cluster and assigns crops from all sessions.
+        
+        This is useful for identifying the same person across multiple sessions in a class.
+        
+        Constraints:
+        - Face crops with existing student assignments are kept in separate clusters
+        - Never mixes crops from different students in the same cluster
+        - Only unidentified crops are clustered together
+        - Only crops with embeddings are processed (crops without embeddings are ignored)
+        
+        Body params:
+        - max_clusters: Maximum number of clusters (2-200)
+        - force_clustering: If False, crops with low similarity stay unassigned
+        - similarity_threshold: Minimum similarity for clustering (0.0-1.0)
+        """
+        class_obj = self.get_object()
+        
+        # Validate request data
+        serializer = ClusterCropsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Extract validated parameters
+        max_clusters = serializer.validated_data['max_clusters']
+        force_clustering = serializer.validated_data['force_clustering']
+        similarity_threshold = serializer.validated_data['similarity_threshold']
+        
+        # Import ClusteringService
+        from attendance.services import ClusteringService
+        
+        try:
+            # Run clustering
+            result = ClusteringService.cluster_class_crops(
+                class_id=class_obj.id,
+                max_clusters=max_clusters,
+                force_clustering=force_clustering,
+                similarity_threshold=similarity_threshold
+            )
+            
+            return Response({
+                'status': 'success',
+                'class_id': class_obj.id,
+                'class_name': class_obj.name,
+                **result
+            })
+            
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Clustering failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class StudentViewSet(viewsets.ModelViewSet):
@@ -494,10 +795,15 @@ class StudentViewSet(viewsets.ModelViewSet):
             
             crops_data = []
             for crop in face_crops:
+                # Build absolute URL for crop image
+                crop_image_url = ''
+                if crop.crop_image_path:
+                    crop_image_url = request.build_absolute_uri(crop.crop_image_path.url)
+                
                 crops_data.append({
                     'id': crop.id,
                     'image_id': crop.image.id,
-                    'crop_image_path': str(crop.crop_image_path) if crop.crop_image_path else '',
+                    'crop_image_path': crop_image_url,
                     'confidence_score': crop.confidence_score,
                     'created_at': crop.created_at
                 })
@@ -658,7 +964,7 @@ class SessionViewSet(viewsets.ModelViewSet):
         """
         session = self.get_object()
         images = session.images.all().order_by('-upload_date')
-        serializer = ImageSerializer(images, many=True)
+        serializer = ImageSerializer(images, many=True, context={'request': request})
         return Response(serializer.data)
     
     @action(detail=True, methods=['get'])
@@ -762,8 +1068,8 @@ class SessionViewSet(viewsets.ModelViewSet):
         else:
             crops = crops.order_by(sort_by)
         
-        # Serialize the crops
-        serializer = FaceCropDetailSerializer(crops, many=True)
+        # Serialize the crops with request context for absolute URLs
+        serializer = FaceCropDetailSerializer(crops, many=True, context={'request': request})
         
         return Response({
             'session_id': session_obj.id,
@@ -863,6 +1169,200 @@ class SessionViewSet(viewsets.ModelViewSet):
             'message': 'Crop aggregation completed successfully. '
                       'Note: Full aggregation logic will be implemented with core face recognition module.'
         }, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['post'], url_path='generate-embeddings')
+    def generate_embeddings(self, request, pk=None):
+        """
+        Generate embeddings for all face crops in the session.
+        
+        This endpoint generates embeddings for all face crops in the session.
+        If process_unprocessed_images is true and there are unprocessed images,
+        it will process them first.
+        
+        Parameters:
+        - model_name: Embedding model ('arcface', 'facenet512') (default: 'arcface')
+        - process_unprocessed_images: Process unprocessed images first (default: false)
+        - detector_backend: Detector to use if processing images (default: 'retinaface')
+        - confidence_threshold: Detection confidence (default: 0.5)
+        - apply_background_effect: Apply background effect (default: true)
+        
+        Returns:
+        - Total crops found
+        - Embeddings generated
+        - Embeddings failed
+        - Images processed (if process_unprocessed_images=true)
+        """
+        from attendance.services import EmbeddingService
+        from attendance.utils import process_image_with_face_detection
+        from attendance.serializers import BulkGenerateEmbeddingsSerializer
+        
+        session_obj = self.get_object()
+        
+        # Validate request data
+        serializer = BulkGenerateEmbeddingsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get parameters
+        model_name = serializer.validated_data.get('model_name', 'arcface')
+        process_unprocessed = serializer.validated_data.get('process_unprocessed_images', False)
+        detector_backend = serializer.validated_data.get('detector_backend', 'retinaface')
+        confidence_threshold = serializer.validated_data.get('confidence_threshold', 0.5)
+        apply_background_effect = serializer.validated_data.get('apply_background_effect', True)
+        
+        # Check for unprocessed images
+        unprocessed_images = session_obj.images.filter(is_processed=False)
+        
+        images_processed = 0
+        
+        if unprocessed_images.exists():
+            if not process_unprocessed:
+                return Response({
+                    'error': 'Session has unprocessed images',
+                    'unprocessed_count': unprocessed_images.count(),
+                    'message': 'Set process_unprocessed_images=true to process them first'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Process unprocessed images first
+            for image in unprocessed_images:
+                try:
+                    process_image_with_face_detection(
+                        image_obj=image,
+                        detector_backend=detector_backend,
+                        min_confidence=confidence_threshold,
+                        apply_background_effect=apply_background_effect,
+                        rectangle_color=(0, 255, 0),
+                        rectangle_thickness=2
+                    )
+                    images_processed += 1
+                except Exception as e:
+                    # Continue processing other images
+                    pass
+        
+        # Get all face crops in the session
+        all_face_crops = FaceCrop.objects.filter(image__session=session_obj)
+        
+        # Only process crops without embeddings
+        face_crops = all_face_crops.filter(embedding__isnull=True)
+        
+        crops_with_embeddings = all_face_crops.filter(embedding__isnull=False).count()
+        
+        if not face_crops.exists():
+            return Response({
+                'status': 'completed',
+                'message': 'All face crops already have embeddings',
+                'total_crops': all_face_crops.count(),
+                'crops_with_embeddings': crops_with_embeddings,
+                'crops_without_embeddings': 0,
+                'embeddings_generated': 0,
+                'embeddings_failed': 0,
+                'images_processed': images_processed
+            })
+        
+        # Generate embeddings
+        generated_count = 0
+        failed_count = 0
+        errors = []
+        
+        for crop in face_crops:
+            crop_image_path = crop.crop_image_path.path if crop.crop_image_path else None
+            
+            if not crop_image_path or not os.path.exists(crop_image_path):
+                failed_count += 1
+                continue
+            
+            try:
+                embedding = EmbeddingService.generate_embedding(
+                    image_path=crop_image_path,
+                    model_name=model_name
+                )
+                
+                if embedding is not None:
+                    crop.embedding = embedding
+                    crop.embedding_model = model_name
+                    crop.save(update_fields=['embedding', 'embedding_model', 'updated_at'])
+                    generated_count += 1
+                else:
+                    failed_count += 1
+            except Exception as e:
+                failed_count += 1
+                errors.append({
+                    'crop_id': crop.id,
+                    'error': str(e)
+                })
+        
+        return Response({
+            'status': 'completed',
+            'session_id': session_obj.id,
+            'session_name': session_obj.name,
+            'class_id': session_obj.class_session.id,
+            'model_name': model_name,
+            'total_crops': all_face_crops.count(),
+            'crops_with_embeddings': crops_with_embeddings,
+            'crops_without_embeddings': face_crops.count(),
+            'embeddings_generated': generated_count,
+            'embeddings_failed': failed_count,
+            'images_processed': images_processed,
+            'errors': errors[:10] if errors else None  # Limit to first 10 errors
+        })
+
+    @action(detail=True, methods=['post'], url_path='cluster-crops')
+    def cluster_crops(self, request, pk=None):
+        """
+        Cluster face crops in this session based on embedding similarity.
+        Creates new Student instances for each cluster and assigns crops.
+        
+        Constraints:
+        - Face crops with existing student assignments are kept in separate clusters
+        - Never mixes crops from different students in the same cluster
+        - Only unidentified crops are clustered together
+        - Only crops with embeddings are processed (crops without embeddings are ignored)
+        
+        Body params:
+        - max_clusters: Maximum number of clusters (2-200)
+        - force_clustering: If False, crops with low similarity stay unassigned
+        - similarity_threshold: Minimum similarity for clustering (0.0-1.0)
+        """
+        session_obj = self.get_object()
+        
+        # Validate request data
+        serializer = ClusterCropsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Extract validated parameters
+        max_clusters = serializer.validated_data['max_clusters']
+        force_clustering = serializer.validated_data['force_clustering']
+        similarity_threshold = serializer.validated_data['similarity_threshold']
+        
+        # Import ClusteringService
+        from attendance.services import ClusteringService
+        
+        try:
+            # Run clustering
+            result = ClusteringService.cluster_session_crops(
+                session_id=session_obj.id,
+                max_clusters=max_clusters,
+                force_clustering=force_clustering,
+                similarity_threshold=similarity_threshold
+            )
+            
+            return Response({
+                'status': 'success',
+                'session_id': session_obj.id,
+                'session_name': session_obj.name,
+                **result
+            })
+            
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Clustering failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class ImageViewSet(viewsets.ModelViewSet):
@@ -915,7 +1415,7 @@ class ImageViewSet(viewsets.ModelViewSet):
         """
         image = self.get_object()
         crops = image.face_crops.all().order_by('-created_at')
-        serializer = FaceCropDetailSerializer(crops, many=True)
+        serializer = FaceCropDetailSerializer(crops, many=True, context={'request': request})
         return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
@@ -1185,4 +1685,156 @@ class FaceCropViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    
+    @action(detail=True, methods=['get'], url_path='similar-faces')
+    def similar_faces(self, request, pk=None):
+        """
+        Return top-k similar face crops within the same class.
+
+        Query params:
+        - k: number of neighbors (default 5)
+        - include_unidentified: whether to include crops without student (default true)
+        - embedding_model: optional override of embedding model filter
+        """
+        from attendance.services import AssignmentService
+
+        face_crop = self.get_object()
+        if face_crop.embedding is None:
+            return Response(
+                {'error': 'This crop has no embedding. Generate embedding first.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            k = int(request.query_params.get('k', '5'))
+            include_unidentified = request.query_params.get('include_unidentified', 'true').lower() == 'true'
+            embedding_model = request.query_params.get('embedding_model') or face_crop.embedding_model
+        except ValueError:
+            return Response({'error': 'Invalid query parameters'}, status=status.HTTP_400_BAD_REQUEST)
+
+        neighbors = AssignmentService.find_similar_crops(
+            crop=face_crop,
+            k=max(1, min(50, k)),
+            embedding_model=embedding_model,
+            include_unidentified=include_unidentified,
+        )
+
+        # Convert crop_image_path to absolute URLs
+        for neighbor in neighbors:
+            if neighbor.get('crop_image_path'):
+                try:
+                    # Get the crop object to access the ImageField
+                    neighbor_crop = FaceCrop.objects.get(id=neighbor['crop_id'])
+                    if neighbor_crop.crop_image_path:
+                        neighbor['crop_image_path'] = request.build_absolute_uri(neighbor_crop.crop_image_path.url)
+                except FaceCrop.DoesNotExist:
+                    pass
+
+        return Response({
+            'crop_id': face_crop.id,
+            'k': len(neighbors),
+            'embedding_model': embedding_model,
+            'neighbors': neighbors,
+        })
+
+    @action(detail=True, methods=['post'], url_path='assign')
+    def assign(self, request, pk=None):
+        """
+        Automatically assign this face crop to a student using similarity search.
+
+        Body params:
+        - k (int, default 5): number of neighbors to consider when use_voting is true
+        - similarity_threshold (float, default 0.6): minimum similarity to accept
+        - embedding_model (str, optional): model to use/require
+        - use_voting (bool, default false): majority voting over top-k
+        - auto_commit (bool, default true): if true, save assignment
+        """
+        from attendance.services import AssignmentService
+
+        face_crop = self.get_object()
+
+        k = int(request.data.get('k', 5))
+        similarity_threshold = float(request.data.get('similarity_threshold', 0.6))
+        use_voting = bool(request.data.get('use_voting', False))
+        auto_commit = bool(request.data.get('auto_commit', True))
+        embedding_model = request.data.get('embedding_model') or face_crop.embedding_model
+
+        if face_crop.embedding is None:
+            return Response(
+                {'error': 'This crop has no embedding. Generate embedding first.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Optionally enforce embedding model consistency
+        if embedding_model and face_crop.embedding_model and embedding_model != face_crop.embedding_model:
+            # Not a hard error, but warn in message
+            pass
+
+        result = AssignmentService.auto_assign(
+            crop=face_crop,
+            similarity_threshold=similarity_threshold,
+            k=max(1, min(50, k)),
+            use_voting=use_voting,
+            commit=auto_commit,
+        )
+
+        response = {
+            'status': 'assigned' if result.get('assigned') else 'no_match',
+            'crop_id': face_crop.id,
+            'assigned': result.get('assigned', False),
+            'student_id': result.get('student_id'),
+            'student_name': None,
+            'confidence': result.get('confidence'),
+            'message': result.get('message', ''),
+        }
+
+        if response['student_id']:
+            try:
+                student = Student.objects.get(id=response['student_id'])
+                response['student_name'] = student.full_name
+            except Student.DoesNotExist:
+                response['student_name'] = None
+
+        # Include neighbors for UI when not committing or for transparency
+        response['k_nearest'] = result.get('neighbors', [])
+
+        return Response(response)
+
+    @action(detail=True, methods=['post'], url_path='assign-from-candidate')
+    def assign_from_candidate(self, request, pk=None):
+        """
+        Assign this crop to the same student as a selected candidate crop.
+
+        Body params:
+        - candidate_crop_id (int, required)
+        - confidence (float, optional): confidence score to store
+        """
+        from attendance.services import AssignmentService
+
+        face_crop = self.get_object()
+        candidate_crop_id = request.data.get('candidate_crop_id')
+        confidence = request.data.get('confidence')
+        try:
+            confidence_val = float(confidence) if confidence is not None else None
+        except (TypeError, ValueError):
+            confidence_val = None
+
+        if not candidate_crop_id:
+            return Response({'error': 'candidate_crop_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            candidate_id_int = int(candidate_crop_id)
+        except (TypeError, ValueError):
+            return Response({'error': 'candidate_crop_id must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = AssignmentService.assign_from_candidate(face_crop, candidate_id_int, confidence_val)
+        status_str = 'assigned' if result.get('assigned') else 'no_assignment'
+        return Response({
+            'status': status_str,
+            'crop_id': face_crop.id,
+            'assigned': result.get('assigned', False),
+            'student_id': result.get('student_id'),
+            'student_name': result.get('student_name'),
+            'confidence': result.get('confidence'),
+            'message': result.get('message'),
+        })
+

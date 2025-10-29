@@ -68,7 +68,41 @@ AttendanSee/
 
 - **Backend**: Python 3.10+, PostgreSQL 13+
 - **Frontend**: Node.js 18+, npm
-- **Docker**: Docker & Docker Compose (optional)
+- **Docker**: Docker & Docker Compose (recommended)
+
+### Docker Setup (Recommended) 🐳
+
+The easiest way to run the entire application:
+
+```bash
+# 1. Create environment file
+cp .env.example .env
+# Edit .env with your database settings
+
+# 2. Start all services (frontend + backend + nginx)
+docker-compose up -d --build
+
+# 3. Run migrations (first time only)
+docker-compose exec backend python manage.py migrate
+
+# 4. Create superuser (first time only)
+docker-compose exec backend python manage.py createsuperuser
+
+# Access the application at http://localhost:10101
+```
+
+**Or use the startup script:**
+
+```bash
+# Linux/Mac
+chmod +x start.sh
+./start.sh
+
+# Windows
+start.bat
+```
+
+See [DOCKER.md](./DOCKER.md) for complete Docker documentation.
 
 ### Backend Setup
 
@@ -113,17 +147,27 @@ npm run dev
 
 Frontend runs at `http://localhost:3000`
 
-### Docker Setup (Recommended)
+### Docker Compose Setup (Full Stack)
+
+Run the entire application with one command:
 
 ```bash
-# Frontend only
-cd frontend
-docker-compose up -d
+# Using the startup script (recommended)
+./start.sh          # Linux/Mac
+start.bat           # Windows
 
-# Access at http://localhost:3000
+# Or manually
+docker-compose up -d --build
 ```
 
+Application runs at `http://localhost:10101`
+
+**See [DOCKER.md](./DOCKER.md) for detailed Docker documentation.**
+
 ## 📚 Documentation
+
+### General
+- [Docker Deployment Guide](./DOCKER.md) - Complete Docker Compose setup
 
 ### Backend
 - [Backend README](./backend/README.md) - Complete setup and API guide
@@ -387,11 +431,13 @@ For issues or questions:
 
 ## Quick Links
 
-- **Backend API Docs**: http://localhost:8000/swagger/
-- **Backend Admin**: http://localhost:8000/admin/
-- **Frontend App**: http://localhost:3000
+- **Full Application**: http://localhost:10101 (Docker)
+- **Backend API Docs**: http://localhost:8000/swagger/ or http://localhost:10101/swagger/ (Docker)
+- **Backend Admin**: http://localhost:8000/admin/ or http://localhost:10101/admin/ (Docker)
+- **Frontend App**: http://localhost:3000 or http://localhost:10101 (Docker)
 - **Backend Repo**: [./backend/](./backend/)
 - **Frontend Repo**: [./frontend/](./frontend/)
+- **Docker Guide**: [./DOCKER.md](./DOCKER.md)
 
 ---
 

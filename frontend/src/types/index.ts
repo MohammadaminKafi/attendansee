@@ -167,6 +167,90 @@ export interface ProcessImageResponse {
   message: string;
 }
 
+export interface BulkProcessImagesData {
+  detector_backend?: 'opencv' | 'ssd' | 'dlib' | 'mtcnn' | 'retinaface' | 'mediapipe' | 'yolov8' | 'yunet';
+  confidence_threshold?: number;
+  apply_background_effect?: boolean;
+  rectangle_color?: [number, number, number];
+  rectangle_thickness?: number;
+}
+
+export interface BulkProcessImagesResponse {
+  status: string;
+  class_id: number;
+  class_name: string;
+  total_images: number;
+  processed_count: number;
+  failed_count: number;
+  total_faces_detected: number;
+  errors?: Array<{
+    image_id: number;
+    session_id: number;
+    error: string;
+  }>;
+}
+
+export interface GenerateEmbeddingsData {
+  model_name?: 'arcface' | 'facenet512';
+  process_unprocessed_images?: boolean;
+  detector_backend?: 'opencv' | 'ssd' | 'dlib' | 'mtcnn' | 'retinaface' | 'mediapipe' | 'yolov8' | 'yunet';
+  confidence_threshold?: number;
+  apply_background_effect?: boolean;
+}
+
+export interface GenerateEmbeddingsResponse {
+  status: string;
+  session_id?: number;
+  session_name?: string;
+  class_id: number;
+  class_name?: string;
+  model_name: string;
+  total_crops: number;
+  crops_with_embeddings?: number;
+  crops_without_embeddings?: number;
+  embeddings_generated: number;
+  embeddings_failed: number;
+  images_processed: number;
+  errors?: Array<{
+    crop_id: number;
+    error: string;
+  }>;
+  error?: string;
+  unprocessed_count?: number;
+  message?: string;
+}
+
+export interface ClusterCropsData {
+  max_clusters?: number;
+  force_clustering?: boolean;
+  similarity_threshold?: number;
+}
+
+export interface ClusterCropsResponse {
+  status: string;
+  session_id?: number;
+  session_name?: string;
+  class_id?: number;
+  class_name?: string;
+  total_face_crops: number;
+  crops_with_embeddings: number;
+  crops_without_embeddings: number;
+  identified_crops: number;
+  unidentified_crops: number;
+  clusters_created: number;
+  students_created: number;
+  crops_assigned: number;
+  outliers: number;
+  student_names: string[];
+  session_breakdown?: Array<{
+    session_id: number;
+    session_name: string;
+    crops_assigned: number;
+    unique_students: number;
+  }>;
+  error?: string;
+}
+
 // Face Crop types
 export interface FaceCrop {
   id: number;
@@ -208,7 +292,10 @@ export interface ClassStatistics {
   session_count: number;
   total_images: number;
   processed_images: number;
+  unprocessed_images_count: number;
   total_face_crops: number;
+  crops_with_embeddings: number;
+  crops_without_embeddings: number;
   identified_faces: number;
 }
 

@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -21,12 +22,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-c$(6#78fthb(-^a1jahwg#j%q*$--_*(f609c1*l==&d=ru9d5'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-c$(6#78fthb(-^a1jahwg#j%q*$--_*(f609c1*l==&d=ru9d5')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = []
+# Hosts: allow all for development (no filtering of IPs/hosts)
+# Note: Do not use this configuration in production.
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -89,11 +92,11 @@ WSGI_APPLICATION = 'attendansee_backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'attendansee_db',
-        'USER': 'attendansee_user',
-        'PASSWORD': 'attendansee_user',
-        'HOST': 'localhost',
-        'PORT': '5433',
+        'NAME': os.getenv('DB_NAME', 'attendansee_db'),
+        'USER': os.getenv('DB_USER', 'attendansee_user'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'attendansee_user'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5433'),
     }
 }
 
@@ -141,7 +144,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Media files (uploads)
 MEDIA_URL = '/media/'
@@ -156,14 +160,28 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'authentication.User'
 
 # CORS Settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-]
+CORS_ALLOWED_ORIGINS = os.getenv(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173,http://localhost:10101,http://127.0.0.1:10101'
+).split(',')
+
+# For development: allow all origins (comment out in production)
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True') == 'True'
 
 CORS_ALLOW_CREDENTIALS = True
+
+# CSRF trusted origins are required when using cookies across different origins
+# (not strictly needed for JWT-only flows, but safe to include for admin, etc.).
+# Can be extended via CSRF_TRUSTED_ORIGINS env var (comma-separated full origins).
+_DEFAULT_CSRF_TRUSTED = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://host.docker.internal:3000',
+]
+_CSRF_ENV = [o.strip() for o in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()]
+CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(_DEFAULT_CSRF_TRUSTED + _CSRF_ENV))
 
 # Django REST Framework Settings
 REST_FRAMEWORK = {

@@ -4,3 +4,7 @@ export { Card } from './Card';
 export { Modal } from './Modal';
 export { LoadingSpinner } from './LoadingSpinner';
 export { ProcessingSpinner, ProcessingOverlay, InlineProcessing } from './ProcessingSpinner';
+export { EmbeddingGenerationModal } from './EmbeddingGenerationModal';
+export type { EmbeddingGenerationOptions } from './EmbeddingGenerationModal';
+export { ClusteringModal } from './ClusteringModal';
+export type { ClusteringOptions } from './ClusteringModal';

@@ -62,12 +62,17 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
 
   // Helper functions
   const getImageUrl = (path: string) => {
+    if (!path) return '';
+    // Backend now returns absolute URLs, use them directly
     if (path.startsWith('http://') || path.startsWith('https://')) {
       return path;
     }
+    // Fallback for relative paths (shouldn't happen with updated serializer)
     const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
     const baseUrl = API_BASE.replace('/api', '');
-    return `${baseUrl}${path.startsWith('/') ? path : '/' + path}`;
+    // Ensure path starts with /
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    return `${baseUrl}${normalizedPath}`;
   };
 
   const sortFaceCrops = (crops: FaceCropDetail[]): FaceCropDetail[] => {
@@ -207,6 +212,10 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
           src={getImageUrl(crop.crop_image_path)}
           alt={`Face ${crop.id}`}
           className="w-full h-full object-cover"
+          onError={(e) => {
+            const target = e.target as HTMLImageElement;
+            target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23334155" width="100" height="100"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" fill="%23cbd5e1" font-family="sans-serif" font-size="14"%3ENo Preview%3C/text%3E%3C/svg%3E';
+          }}
         />
       </div>
 

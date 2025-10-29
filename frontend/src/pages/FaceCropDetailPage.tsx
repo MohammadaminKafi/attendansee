@@ -53,6 +53,19 @@ const FaceCropDetailPage: React.FC = () => {
     use_voting: true,
   });
 
+  // Suggestions modal
+  const [showSuggestModal, setShowSuggestModal] = useState(false);
+  const [suggestions, setSuggestions] = useState<Array<{
+    crop_id: number;
+    student_id: number | null;
+    student_name: string | null;
+    similarity: number;
+    distance: number | null;
+    crop_image_path: string;
+    is_identified: boolean;
+  }>>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
   useEffect(() => {
     loadData();
   }, [cropId]);
@@ -130,6 +143,49 @@ const FaceCropDetailPage: React.FC = () => {
     } catch (err: any) {
       console.error('Error assigning crop:', err);
       setError(err.response?.data?.error || 'Failed to assign crop');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleOpenSuggestions = async () => {
+    if (!cropId) return;
+    try {
+      setLoadingSuggestions(true);
+      setError(null);
+      setSuccessMessage(null);
+      const res = await faceCropsAPI.getSimilarFaces(parseInt(cropId), {
+        k: assignOptions.k,
+        include_unidentified: true,
+        embedding_model: assignOptions.embedding_model,
+      });
+      setSuggestions(res.neighbors);
+      setShowSuggestModal(true);
+    } catch (err: any) {
+      console.error('Error fetching suggestions:', err);
+      setError(err.response?.data?.error || 'Failed to fetch similar faces');
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  const handleAssignFromSuggestion = async (candidateCropId: number, confidence?: number) => {
+    if (!cropId) return;
+    try {
+      setProcessing(true);
+      setError(null);
+      setSuccessMessage(null);
+      const res = await faceCropsAPI.assignFromCandidate(parseInt(cropId), candidateCropId, confidence);
+      if (res.assigned && res.student_name) {
+        setSuccessMessage(`Assigned to ${res.student_name}${res.confidence ? ` (confidence: ${(res.confidence * 100).toFixed(1)}%)` : ''}`);
+      } else {
+        setError(res.message || 'Could not assign from selected candidate');
+      }
+      await loadData();
+      setShowSuggestModal(false);
+    } catch (err: any) {
+      console.error('Error assigning from candidate:', err);
+      setError(err.response?.data?.error || 'Failed to assign from selected candidate');
     } finally {
       setProcessing(false);
     }
@@ -419,6 +475,15 @@ const FaceCropDetailPage: React.FC = () => {
             <UserCheck className="w-4 h-4 mr-2" />
             Assign to Student
           </Button>
+          <Button
+            onClick={handleOpenSuggestions}
+            disabled={processing || !crop?.embedding_model}
+            variant="secondary"
+            className="w-full"
+          >
+            <UserCheck className="w-4 h-4 mr-2" />
+            Suggest and Choose
+          </Button>
         </div>
       </Card>
 
@@ -652,6 +717,72 @@ const FaceCropDetailPage: React.FC = () => {
                   Assign
                 </>
               )}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Suggestions Modal */}
+      <Modal
+        isOpen={showSuggestModal}
+        onClose={() => setShowSuggestModal(false)}
+        title={`Choose From Top-${assignOptions.k} Similar Faces`}
+      >
+        <div className="space-y-4">
+          {!crop?.embedding_model && (
+            <div className="p-3 bg-danger/10 border border-danger/20 rounded-lg flex items-start gap-3">
+              <XCircle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm text-danger-light">
+                  This crop doesn't have an embedding yet. Please generate an embedding first.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {loadingSuggestions ? (
+            <div className="flex items-center justify-center py-8">
+              <LoadingSpinner />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {suggestions.map((sug) => (
+                <div key={sug.crop_id} className="p-3 bg-dark-hover rounded-lg border border-dark-border">
+                  <div className="aspect-square rounded overflow-hidden mb-3 bg-dark-bg">
+                    <img src={getImageUrl(sug.crop_image_path)} alt={`Candidate ${sug.crop_id}`} className="w-full h-full object-contain" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm text-white font-medium">
+                      {sug.student_name || 'Unassigned'}
+                    </p>
+                    <p className="text-xs text-gray-400">Similarity: {(sug.similarity * 100).toFixed(1)}%</p>
+                  </div>
+                  <div className="mt-3">
+                    {sug.student_id ? (
+                      <Button
+                        className="w-full"
+                        onClick={() => handleAssignFromSuggestion(sug.crop_id, sug.similarity)}
+                        disabled={processing}
+                      >
+                        Assign to {sug.student_name}
+                      </Button>
+                    ) : (
+                      <Button className="w-full" variant="secondary" disabled>
+                        No student assigned
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {suggestions.length === 0 && (
+                <p className="text-gray-400 text-sm">No similar faces found.</p>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setShowSuggestModal(false)} className="flex-1">
+              Close
             </Button>
           </div>
         </div>
