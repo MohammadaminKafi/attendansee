@@ -41,6 +41,9 @@ services:
       - CORS_ALLOW_ALL_ORIGINS=${CORS_ALLOW_ALL_ORIGINS}
       - DJANGO_SETTINGS_MODULE=attendansee_backend.settings
       - PYTHONUNBUFFERED=1
+      - DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME}
+      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD}
+      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL}
     volumes:
       - ./backend/media:/app/media
     depends_on:
