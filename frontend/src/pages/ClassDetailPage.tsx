@@ -10,10 +10,10 @@ import { StatCard } from '@/components/ui/StatCard';
 import { SessionsTab } from '@/components/tabs/SessionsTab';
 import { StudentsTab } from '@/components/tabs/StudentsTab';
 import { ReportTab } from '@/components/tabs/ReportTab';
-import { EmbeddingGenerationModal, EmbeddingGenerationOptions, ClusteringModal, ClusteringOptions } from '@/components/ui';
+import { EmbeddingGenerationModal, EmbeddingGenerationOptions, ClusteringModal, ClusteringOptions, AutoAssignModal, AutoAssignResultModal, ManualAssignModal } from '@/components/ui';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
-import { ArrowLeft, Layers, Sparkles, Users } from 'lucide-react';
+import { ArrowLeft, Layers, Sparkles, Users, Wand2, UserCheck } from 'lucide-react';
 
 export const ClassDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -38,6 +38,17 @@ export const ClassDetailPage: React.FC = () => {
   const [clusteringInProgress, setClusteringInProgress] = useState(false);
   const [clusteringResult, setClusteringResult] = useState<any>(null);
   const [showClusteringResultModal, setShowClusteringResultModal] = useState(false);
+
+  // Auto-assign states
+  const [showAutoAssignModal, setShowAutoAssignModal] = useState(false);
+  const [autoAssigning, setAutoAssigning] = useState(false);
+  const [autoAssignResult, setAutoAssignResult] = useState<any>(null);
+  const [showAutoAssignResultModal, setShowAutoAssignResultModal] = useState(false);
+
+  // Manual assignment states
+  const [showManualAssignModal, setShowManualAssignModal] = useState(false);
+  const [manualAssignSuggestions, setManualAssignSuggestions] = useState<any[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
 
   const tabs: Tab[] = [
     { id: 'sessions', label: 'Sessions', icon: '📅' },
@@ -199,6 +210,63 @@ export const ClassDetailPage: React.FC = () => {
     }
   };
 
+  const handleAutoAssignAll = async (options: any) => {
+    if (!id) return;
+
+    try {
+      setAutoAssigning(true);
+      setError('');
+      setShowAutoAssignModal(false);
+
+      const result = await classesAPI.autoAssignAllCrops(parseInt(id), options);
+      
+      setAutoAssignResult(result);
+      setShowAutoAssignResultModal(true);
+
+      // Reload class data and statistics
+      await loadClassData();
+    } catch (err: any) {
+      console.error('Error auto-assigning crops:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to auto-assign crops';
+      setError(errorMsg);
+    } finally {
+      setAutoAssigning(false);
+    }
+  };
+
+  const handleOpenManualAssign = async () => {
+    if (!id) return;
+
+    try {
+      setLoadingSuggestions(true);
+      setError('');
+
+      const result = await classesAPI.getSuggestAssignments(parseInt(id), {
+        k: 5,
+        include_unidentified: true,
+        limit: 100
+      });
+
+      if (result.suggestions && result.suggestions.length > 0) {
+        setManualAssignSuggestions(result.suggestions);
+        setShowManualAssignModal(true);
+      } else {
+        setError('No unidentified crops found to assign');
+      }
+    } catch (err: any) {
+      console.error('Error loading suggestions:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to load suggestions';
+      setError(errorMsg);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  const handleManualAssignUpdate = () => {
+    // Reload data after manual assignment
+    loadClassData();
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -316,6 +384,40 @@ export const ClassDetailPage: React.FC = () => {
           >
             <Users className="w-4 h-4 mr-2" />
             Cluster All Faces
+          </Button>
+          <Button
+            onClick={() => setShowAutoAssignModal(true)}
+            disabled={autoAssigning || !statistics || statistics.total_face_crops === 0}
+            variant="primary"
+          >
+            {autoAssigning ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+                Assigning...
+              </>
+            ) : (
+              <>
+                <Wand2 className="w-4 h-4 mr-2" />
+                Auto-Assign All
+              </>
+            )}
+          </Button>
+          <Button
+            onClick={handleOpenManualAssign}
+            disabled={loadingSuggestions || !statistics || statistics.total_face_crops === 0}
+            variant="secondary"
+          >
+            {loadingSuggestions ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+                Loading...
+              </>
+            ) : (
+              <>
+                <UserCheck className="w-4 h-4 mr-2" />
+                Manual Assignment
+              </>
+            )}
           </Button>
         </div>
 
@@ -510,6 +612,37 @@ export const ClassDetailPage: React.FC = () => {
           </div>
         </Modal>
       )}
+
+      {/* Auto-Assign Modal */}
+      <AutoAssignModal
+        isOpen={showAutoAssignModal}
+        onClose={() => setShowAutoAssignModal(false)}
+        onAutoAssign={handleAutoAssignAll}
+        isProcessing={autoAssigning}
+        unidentifiedCropsCount={statistics?.total_face_crops ? (statistics.total_face_crops - statistics.identified_faces) : 0}
+        title="Auto-Assign All Class Crops"
+        description="Automatically assign all unidentified face crops across all sessions in this class to students based on similarity matching."
+      />
+
+      {/* Auto-Assign Result Modal */}
+      {autoAssignResult && (
+        <AutoAssignResultModal
+          isOpen={showAutoAssignResultModal}
+          onClose={() => {
+            setShowAutoAssignResultModal(false);
+            setAutoAssignResult(null);
+          }}
+          result={autoAssignResult}
+        />
+      )}
+
+      {/* Manual Assignment Modal */}
+      <ManualAssignModal
+        isOpen={showManualAssignModal}
+        onClose={() => setShowManualAssignModal(false)}
+        suggestions={manualAssignSuggestions}
+        onUpdate={handleManualAssignUpdate}
+      />
     </div>
   );
 };

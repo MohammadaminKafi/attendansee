@@ -29,6 +29,9 @@ import type {
   GenerateEmbeddingsResponse,
   ClusterCropsData,
   ClusterCropsResponse,
+  AutoAssignAllCropsData,
+  AutoAssignAllCropsResponse,
+  SuggestAssignmentsResponse,
 } from '@/types';
 
 // Single source of truth for API base URL: runtime env injected by docker-entrypoint
@@ -224,6 +227,33 @@ export const classesAPI = {
     );
     return response.data;
   },
+
+  autoAssignAllCrops: async (
+    classId: number,
+    options?: AutoAssignAllCropsData
+  ): Promise<AutoAssignAllCropsResponse> => {
+    const response = await api.post<AutoAssignAllCropsResponse>(
+      `/attendance/classes/${classId}/auto-assign-all-crops/`,
+      options || {}
+    );
+    return response.data;
+  },
+
+  getSuggestAssignments: async (
+    classId: number,
+    params?: {
+      k?: number;
+      embedding_model?: string;
+      include_unidentified?: boolean;
+      limit?: number;
+    }
+  ): Promise<SuggestAssignmentsResponse> => {
+    const response = await api.get<SuggestAssignmentsResponse>(
+      `/attendance/classes/${classId}/suggest-assignments/`,
+      { params }
+    );
+    return response.data;
+  },
 };
 
 // Sessions API
@@ -290,6 +320,32 @@ export const sessionsAPI = {
     const response = await api.post<ClusterCropsResponse>(
       `/attendance/sessions/${sessionId}/cluster-crops/`,
       options || {}
+    );
+    return response.data;
+  },
+
+  autoAssignAllCrops: async (
+    sessionId: number,
+    options?: AutoAssignAllCropsData
+  ): Promise<AutoAssignAllCropsResponse> => {
+    const response = await api.post<AutoAssignAllCropsResponse>(
+      `/attendance/sessions/${sessionId}/auto-assign-all-crops/`,
+      options || {}
+    );
+    return response.data;
+  },
+
+  getSuggestAssignments: async (
+    sessionId: number,
+    params?: {
+      k?: number;
+      embedding_model?: 'arcface' | 'facenet512';
+      include_unidentified?: boolean;
+    }
+  ): Promise<SuggestAssignmentsResponse> => {
+    const response = await api.get<SuggestAssignmentsResponse>(
+      `/attendance/sessions/${sessionId}/suggest-assignments/`,
+      { params }
     );
     return response.data;
   },

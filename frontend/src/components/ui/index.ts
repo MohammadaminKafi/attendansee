@@ -8,3 +8,6 @@ export { EmbeddingGenerationModal } from './EmbeddingGenerationModal';
 export type { EmbeddingGenerationOptions } from './EmbeddingGenerationModal';
 export { ClusteringModal } from './ClusteringModal';
 export type { ClusteringOptions } from './ClusteringModal';
+export { AutoAssignModal, AutoAssignResultModal } from './AutoAssignModal';
+export type { AutoAssignOptions } from './AutoAssignModal';
+export { ManualAssignModal } from './ManualAssignModal';
