@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { sessionsAPI, imagesAPI, classesAPI, studentsAPI, faceCropsAPI } from '@/services/api';
-import { Session, Image, Class, FaceCropDetail, Student } from '@/types';
+import { Session, Image, Class, FaceCropDetail, Student, AutoAssignAllCropsResponse, SuggestAssignmentsResponse } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -9,8 +9,17 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { ProcessingOverlay } from '@/components/ui/ProcessingSpinner';
 import { FaceCropsSection } from '@/components/ui/FaceCropsSection';
-import { EmbeddingGenerationModal, EmbeddingGenerationOptions, ClusteringModal, ClusteringOptions } from '@/components/ui';
-import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users } from 'lucide-react';
+import { 
+  EmbeddingGenerationModal, 
+  EmbeddingGenerationOptions, 
+  ClusteringModal, 
+  ClusteringOptions,
+  AutoAssignModal,
+  AutoAssignOptions,
+  AutoAssignResultModal,
+  ManualAssignModal,
+} from '@/components/ui';
+import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users, UserCheck, UserCog } from 'lucide-react';
 
 const SessionDetailPage: React.FC = () => {
   const { classId, sessionId } = useParams<{ classId: string; sessionId: string }>();
@@ -44,6 +53,17 @@ const SessionDetailPage: React.FC = () => {
   const [clusteringInProgress, setClusteringInProgress] = useState(false);
   const [clusteringResult, setClusteringResult] = useState<any>(null);
   const [showClusteringResultModal, setShowClusteringResultModal] = useState(false);
+
+  // Auto-assign states
+  const [showAutoAssignModal, setShowAutoAssignModal] = useState(false);
+  const [autoAssignInProgress, setAutoAssignInProgress] = useState(false);
+  const [autoAssignResult, setAutoAssignResult] = useState<AutoAssignAllCropsResponse | null>(null);
+  const [showAutoAssignResultModal, setShowAutoAssignResultModal] = useState(false);
+
+  // Manual assign states
+  const [showManualAssignModal, setShowManualAssignModal] = useState(false);
+  const [manualAssignSuggestions, setManualAssignSuggestions] = useState<SuggestAssignmentsResponse | null>(null);
+  const [loadingManualSuggestions, setLoadingManualSuggestions] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -341,6 +361,76 @@ const SessionDetailPage: React.FC = () => {
     }
   };
 
+  const handleAutoAssignAll = async (options: AutoAssignOptions) => {
+    if (!sessionId) return;
+
+    try {
+      setAutoAssignInProgress(true);
+      setError(null);
+      setShowAutoAssignModal(false);
+
+      const result = await sessionsAPI.autoAssignAllCrops(parseInt(sessionId), {
+        k: options.k,
+        similarity_threshold: options.similarity_threshold,
+        embedding_model: options.embedding_model,
+        use_voting: options.use_voting,
+      });
+
+      setAutoAssignResult(result);
+      setShowAutoAssignResultModal(true);
+
+      // Reload face crops to reflect assignments
+      await handleFaceCropsUpdate();
+      if (sessionId) {
+        const updatedSession = await sessionsAPI.getSession(parseInt(sessionId));
+        setSession(updatedSession);
+      }
+    } catch (err: any) {
+      console.error('Error auto-assigning crops:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to auto-assign crops';
+      setError(errorMsg);
+    } finally {
+      setAutoAssignInProgress(false);
+    }
+  };
+
+  const handleOpenManualAssign = async () => {
+    if (!sessionId) return;
+
+    try {
+      setLoadingManualSuggestions(true);
+      setError(null);
+
+      const result = await sessionsAPI.getSuggestAssignments(parseInt(sessionId), {
+        k: 5,
+        include_unidentified: true,
+      });
+
+      if (result.suggestions.length === 0) {
+        setError('No unidentified crops with embeddings found to assign');
+        return;
+      }
+
+      setManualAssignSuggestions(result);
+      setShowManualAssignModal(true);
+    } catch (err: any) {
+      console.error('Error loading assignment suggestions:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to load suggestions';
+      setError(errorMsg);
+    } finally {
+      setLoadingManualSuggestions(false);
+    }
+  };
+
+  const handleManualAssignUpdate = async () => {
+    // Reload face crops after manual assignment
+    await handleFaceCropsUpdate();
+    if (sessionId) {
+      const updatedSession = await sessionsAPI.getSession(parseInt(sessionId));
+      setSession(updatedSession);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -580,7 +670,7 @@ const SessionDetailPage: React.FC = () => {
                 All detected faces across {images.length} image{images.length !== 1 ? 's' : ''}
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <Button
                 onClick={() => setShowEmbeddingModal(true)}
                 variant="primary"
@@ -588,6 +678,22 @@ const SessionDetailPage: React.FC = () => {
               >
                 <Sparkles className="w-4 h-4 mr-2" />
                 Generate Embeddings
+              </Button>
+              <Button
+                onClick={() => setShowAutoAssignModal(true)}
+                variant="secondary"
+                disabled={faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0 || autoAssignInProgress}
+              >
+                <UserCheck className="w-4 h-4 mr-2" />
+                Auto-Assign All
+              </Button>
+              <Button
+                onClick={handleOpenManualAssign}
+                variant="secondary"
+                disabled={faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0 || loadingManualSuggestions}
+              >
+                <UserCog className="w-4 h-4 mr-2" />
+                Manual Assignment
               </Button>
               <Button
                 onClick={() => setShowClusteringModal(true)}
@@ -735,6 +841,43 @@ const SessionDetailPage: React.FC = () => {
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* Auto-Assign Modal */}
+      <AutoAssignModal
+        isOpen={showAutoAssignModal}
+        onClose={() => setShowAutoAssignModal(false)}
+        onAutoAssign={handleAutoAssignAll}
+        isProcessing={autoAssignInProgress}
+        cropsWithoutEmbeddings={faceCrops.filter(c => !c.embedding_model).length}
+        unidentifiedCropsCount={faceCrops.filter(c => !c.is_identified && c.embedding_model).length}
+        title="Auto-Assign All Face Crops"
+        description="Automatically assign all unidentified face crops in this session to students using similarity matching."
+      />
+
+      {/* Auto-Assign Result Modal */}
+      {autoAssignResult && (
+        <AutoAssignResultModal
+          isOpen={showAutoAssignResultModal}
+          onClose={() => {
+            setShowAutoAssignResultModal(false);
+            setAutoAssignResult(null);
+          }}
+          result={autoAssignResult}
+        />
+      )}
+
+      {/* Manual Assignment Modal */}
+      {manualAssignSuggestions && (
+        <ManualAssignModal
+          isOpen={showManualAssignModal}
+          onClose={() => {
+            setShowManualAssignModal(false);
+            setManualAssignSuggestions(null);
+          }}
+          suggestions={manualAssignSuggestions.suggestions}
+          onUpdate={handleManualAssignUpdate}
+        />
       )}
 
       {/* Delete Image Modal */}

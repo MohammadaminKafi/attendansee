@@ -679,6 +679,243 @@ class ClassViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=['post'], url_path='auto-assign-all-crops')
+    def auto_assign_all_crops(self, request, pk=None):
+        """
+        Automatically assign all unidentified face crops across all sessions in the class
+        to students using similarity-based matching.
+        
+        This endpoint processes all unidentified crops that have embeddings across the entire
+        class and attempts to assign them to students using K-Nearest Neighbors on existing
+        identified crops.
+        
+        Body params:
+        - k: Number of neighbors to consider (default: 5)
+        - similarity_threshold: Minimum similarity score (0.0-1.0, default: 0.6)
+        - embedding_model: Optional model filter ('arcface' or 'facenet512')
+        - use_voting: Use majority voting among top-k (default: false)
+        
+        Returns:
+        - Statistics about assignments made across all sessions
+        - List of assigned crops with confidence scores
+        - List of unassigned crops (with reasons)
+        - Per-session breakdown
+        """
+        from attendance.services import AssignmentService
+        
+        class_obj = self.get_object()
+        
+        # Parse parameters with defaults
+        k = int(request.data.get('k', 5))
+        similarity_threshold = float(request.data.get('similarity_threshold', 0.6))
+        embedding_model = request.data.get('embedding_model')
+        use_voting = bool(request.data.get('use_voting', False))
+        
+        # Validate parameters
+        if k < 1 or k > 50:
+            return Response({'error': 'k must be between 1 and 50'}, status=status.HTTP_400_BAD_REQUEST)
+        if similarity_threshold < 0.0 or similarity_threshold > 1.0:
+            return Response({'error': 'similarity_threshold must be between 0.0 and 1.0'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get all face crops across all sessions in the class
+        all_crops = FaceCrop.objects.filter(image__session__class_session=class_obj)
+        
+        # Filter to unidentified crops with embeddings
+        unidentified_crops = all_crops.filter(
+            is_identified=False,
+            embedding__isnull=False
+        )
+        
+        if embedding_model:
+            unidentified_crops = unidentified_crops.filter(embedding_model=embedding_model)
+        
+        total_to_process = unidentified_crops.count()
+        
+        if total_to_process == 0:
+            return Response({
+                'status': 'completed',
+                'message': 'No unidentified crops with embeddings found',
+                'class_id': class_obj.id,
+                'class_name': class_obj.name,
+                'total_crops': all_crops.count(),
+                'crops_to_process': 0,
+                'crops_assigned': 0,
+                'crops_unassigned': 0,
+                'assigned_crops': [],
+                'unassigned_crops': [],
+                'session_breakdown': []
+            })
+        
+        # Process each unidentified crop
+        assigned_crops = []
+        unassigned_crops = []
+        session_stats = {}
+        
+        for crop in unidentified_crops:
+            result = AssignmentService.auto_assign(
+                crop=crop,
+                similarity_threshold=similarity_threshold,
+                k=k,
+                use_voting=use_voting,
+                commit=True  # Auto-commit assignments
+            )
+            
+            # Track per-session statistics
+            session_id = crop.image.session.id
+            if session_id not in session_stats:
+                session_stats[session_id] = {
+                    'session_name': crop.image.session.name,
+                    'assigned': 0,
+                    'unassigned': 0
+                }
+            
+            if result['assigned']:
+                assigned_crops.append({
+                    'crop_id': crop.id,
+                    'student_id': result['student_id'],
+                    'student_name': crop.student.full_name if crop.student else None,
+                    'confidence': result.get('confidence'),
+                    'session_id': session_id,
+                    'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None
+                })
+                session_stats[session_id]['assigned'] += 1
+            else:
+                unassigned_crops.append({
+                    'crop_id': crop.id,
+                    'reason': result.get('message', 'No confident match found'),
+                    'session_id': session_id,
+                    'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None
+                })
+                session_stats[session_id]['unassigned'] += 1
+        
+        # Format session breakdown
+        session_breakdown = [
+            {
+                'session_id': sid,
+                'session_name': stats['session_name'],
+                'crops_assigned': stats['assigned'],
+                'crops_unassigned': stats['unassigned']
+            }
+            for sid, stats in session_stats.items()
+        ]
+        
+        return Response({
+            'status': 'completed',
+            'class_id': class_obj.id,
+            'class_name': class_obj.name,
+            'parameters': {
+                'k': k,
+                'similarity_threshold': similarity_threshold,
+                'embedding_model': embedding_model,
+                'use_voting': use_voting
+            },
+            'total_crops': all_crops.count(),
+            'crops_to_process': total_to_process,
+            'crops_assigned': len(assigned_crops),
+            'crops_unassigned': len(unassigned_crops),
+            'assigned_crops': assigned_crops,
+            'unassigned_crops': unassigned_crops,
+            'session_breakdown': session_breakdown
+        })
+
+    @action(detail=True, methods=['get'], url_path='suggest-assignments')
+    def suggest_assignments(self, request, pk=None):
+        """
+        Get top-k similar faces for all unidentified crops across all sessions in the class.
+        This is used for manual assignment workflow where user chooses from suggestions.
+        
+        Query params:
+        - k: Number of similar faces to return per crop (default: 5)
+        - embedding_model: Optional model filter
+        - include_unidentified: Include unidentified faces in suggestions (default: true)
+        - limit: Maximum number of crops to return suggestions for (default: 100)
+        
+        Returns:
+        - List of unidentified crops with their top-k similar faces
+        - Progress information (total count, sessions covered)
+        """
+        from attendance.services import AssignmentService
+        
+        class_obj = self.get_object()
+        
+        # Parse parameters
+        k = int(request.query_params.get('k', 5))
+        embedding_model = request.query_params.get('embedding_model')
+        include_unidentified = request.query_params.get('include_unidentified', 'true').lower() == 'true'
+        limit = int(request.query_params.get('limit', 100))
+        
+        # Validate parameters
+        if k < 1 or k > 50:
+            return Response({'error': 'k must be between 1 and 50'}, status=status.HTTP_400_BAD_REQUEST)
+        if limit < 1 or limit > 1000:
+            return Response({'error': 'limit must be between 1 and 1000'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get all unidentified crops with embeddings across all sessions
+        unidentified_crops = FaceCrop.objects.filter(
+            image__session__class_session=class_obj,
+            is_identified=False,
+            embedding__isnull=False
+        ).select_related('image__session')
+        
+        if embedding_model:
+            unidentified_crops = unidentified_crops.filter(embedding_model=embedding_model)
+        
+        # Limit the number of crops
+        total_count = unidentified_crops.count()
+        unidentified_crops = unidentified_crops[:limit]
+        
+        if not unidentified_crops.exists():
+            return Response({
+                'class_id': class_obj.id,
+                'class_name': class_obj.name,
+                'total_unidentified': 0,
+                'returned_count': 0,
+                'suggestions': []
+            })
+        
+        # Get suggestions for each crop
+        suggestions = []
+        sessions_covered = set()
+        
+        for crop in unidentified_crops:
+            similar_faces = AssignmentService.find_similar_crops(
+                crop=crop,
+                k=k,
+                include_unidentified=include_unidentified
+            )
+            
+            # Convert relative paths to absolute URLs for similar faces
+            for sf in similar_faces:
+                if sf.get('crop_image_path'):
+                    try:
+                        neighbor_crop = FaceCrop.objects.get(id=sf['crop_id'])
+                        if neighbor_crop.crop_image_path:
+                            sf['crop_image_path'] = request.build_absolute_uri(neighbor_crop.crop_image_path.url)
+                        else:
+                            sf['crop_image_path'] = None
+                    except FaceCrop.DoesNotExist:
+                        sf['crop_image_path'] = None
+            
+            sessions_covered.add(crop.image.session.id)
+            
+            suggestions.append({
+                'crop_id': crop.id,
+                'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None,
+                'image_id': crop.image.id,
+                'session_id': crop.image.session.id,
+                'session_name': crop.image.session.name,
+                'similar_faces': similar_faces
+            })
+        
+        return Response({
+            'class_id': class_obj.id,
+            'class_name': class_obj.name,
+            'total_unidentified': total_count,
+            'returned_count': len(suggestions),
+            'sessions_covered': len(sessions_covered),
+            'suggestions': suggestions
+        })
+
 
 class StudentViewSet(viewsets.ModelViewSet):
     """
@@ -1363,6 +1600,194 @@ class SessionViewSet(viewsets.ModelViewSet):
                 {'error': f'Clustering failed: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=['post'], url_path='auto-assign-all-crops')
+    def auto_assign_all_crops(self, request, pk=None):
+        """
+        Automatically assign all unidentified face crops in the session to students
+        using similarity-based matching.
+        
+        This endpoint processes all unidentified crops that have embeddings and attempts
+        to assign them to students using K-Nearest Neighbors on existing identified crops.
+        
+        Body params:
+        - k: Number of neighbors to consider (default: 5)
+        - similarity_threshold: Minimum similarity score (0.0-1.0, default: 0.6)
+        - embedding_model: Optional model filter ('arcface' or 'facenet512')
+        - use_voting: Use majority voting among top-k (default: false)
+        
+        Returns:
+        - Statistics about assignments made
+        - List of assigned crops with confidence scores
+        - List of unassigned crops (with reasons)
+        """
+        from attendance.services import AssignmentService
+        
+        session_obj = self.get_object()
+        
+        # Parse parameters with defaults
+        k = int(request.data.get('k', 5))
+        similarity_threshold = float(request.data.get('similarity_threshold', 0.6))
+        embedding_model = request.data.get('embedding_model')
+        use_voting = bool(request.data.get('use_voting', False))
+        
+        # Validate parameters
+        if k < 1 or k > 50:
+            return Response({'error': 'k must be between 1 and 50'}, status=status.HTTP_400_BAD_REQUEST)
+        if similarity_threshold < 0.0 or similarity_threshold > 1.0:
+            return Response({'error': 'similarity_threshold must be between 0.0 and 1.0'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get all face crops in the session
+        all_crops = FaceCrop.objects.filter(image__session=session_obj)
+        
+        # Filter to unidentified crops with embeddings
+        unidentified_crops = all_crops.filter(
+            is_identified=False,
+            embedding__isnull=False
+        )
+        
+        if embedding_model:
+            unidentified_crops = unidentified_crops.filter(embedding_model=embedding_model)
+        
+        total_to_process = unidentified_crops.count()
+        
+        if total_to_process == 0:
+            return Response({
+                'status': 'completed',
+                'message': 'No unidentified crops with embeddings found',
+                'session_id': session_obj.id,
+                'session_name': session_obj.name,
+                'total_crops': all_crops.count(),
+                'crops_to_process': 0,
+                'crops_assigned': 0,
+                'crops_unassigned': 0,
+                'assigned_crops': [],
+                'unassigned_crops': []
+            })
+        
+        # Process each unidentified crop
+        assigned_crops = []
+        unassigned_crops = []
+        
+        for crop in unidentified_crops:
+            result = AssignmentService.auto_assign(
+                crop=crop,
+                similarity_threshold=similarity_threshold,
+                k=k,
+                use_voting=use_voting,
+                commit=True  # Auto-commit assignments
+            )
+            
+            if result['assigned']:
+                assigned_crops.append({
+                    'crop_id': crop.id,
+                    'student_id': result['student_id'],
+                    'student_name': crop.student.full_name if crop.student else None,
+                    'confidence': result.get('confidence'),
+                    'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None
+                })
+            else:
+                unassigned_crops.append({
+                    'crop_id': crop.id,
+                    'reason': result.get('message', 'No confident match found'),
+                    'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None
+                })
+        
+        return Response({
+            'status': 'completed',
+            'session_id': session_obj.id,
+            'session_name': session_obj.name,
+            'class_id': session_obj.class_session.id,
+            'parameters': {
+                'k': k,
+                'similarity_threshold': similarity_threshold,
+                'embedding_model': embedding_model,
+                'use_voting': use_voting
+            },
+            'total_crops': all_crops.count(),
+            'crops_to_process': total_to_process,
+            'crops_assigned': len(assigned_crops),
+            'crops_unassigned': len(unassigned_crops),
+            'assigned_crops': assigned_crops,
+            'unassigned_crops': unassigned_crops
+        })
+
+    @action(detail=True, methods=['get'], url_path='suggest-assignments')
+    def suggest_assignments(self, request, pk=None):
+        """
+        Get top-k similar faces for all unidentified crops in the session.
+        This is used for manual assignment workflow where user chooses from suggestions.
+        
+        Query params:
+        - k: Number of similar faces to return per crop (default: 5)
+        - embedding_model: Optional model filter
+        - include_unidentified: Include unidentified faces in suggestions (default: true)
+        
+        Returns:
+        - List of unidentified crops with their top-k similar faces
+        - Progress information (current position, total count)
+        """
+        from attendance.services import AssignmentService
+        
+        session_obj = self.get_object()
+        
+        # Parse parameters
+        k = int(request.query_params.get('k', 5))
+        embedding_model = request.query_params.get('embedding_model')
+        include_unidentified = request.query_params.get('include_unidentified', 'true').lower() == 'true'
+        
+        # Validate parameters
+        if k < 1 or k > 50:
+            return Response({'error': 'k must be between 1 and 50'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get all unidentified crops with embeddings
+        unidentified_crops = FaceCrop.objects.filter(
+            image__session=session_obj,
+            is_identified=False,
+            embedding__isnull=False
+        )
+        
+        if embedding_model:
+            unidentified_crops = unidentified_crops.filter(embedding_model=embedding_model)
+        
+        # Get suggestions for each crop
+        suggestions_data = []
+        for crop in unidentified_crops:
+            neighbors = AssignmentService.find_similar_crops(
+                crop=crop,
+                k=k,
+                embedding_model=embedding_model or crop.embedding_model,
+                include_unidentified=include_unidentified
+            )
+            
+            # Convert relative paths to absolute URLs
+            for neighbor in neighbors:
+                if neighbor.get('crop_image_path'):
+                    try:
+                        neighbor_crop = FaceCrop.objects.get(id=neighbor['crop_id'])
+                        if neighbor_crop.crop_image_path:
+                            neighbor['crop_image_path'] = request.build_absolute_uri(neighbor_crop.crop_image_path.url)
+                    except FaceCrop.DoesNotExist:
+                        pass
+            
+            suggestions_data.append({
+                'crop_id': crop.id,
+                'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None,
+                'image_id': crop.image_id,
+                'similar_faces': neighbors
+            })
+        
+        return Response({
+            'session_id': session_obj.id,
+            'session_name': session_obj.name,
+            'total_crops': unidentified_crops.count(),
+            'parameters': {
+                'k': k,
+                'embedding_model': embedding_model,
+                'include_unidentified': include_unidentified
+            },
+            'suggestions': suggestions_data
+        })
 
 
 class ImageViewSet(viewsets.ModelViewSet):

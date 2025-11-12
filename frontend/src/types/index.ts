@@ -251,6 +251,68 @@ export interface ClusterCropsResponse {
   error?: string;
 }
 
+export interface AutoAssignAllCropsData {
+  k?: number;
+  similarity_threshold?: number;
+  embedding_model?: 'arcface' | 'facenet512';
+  use_voting?: boolean;
+}
+
+export interface AutoAssignAllCropsResponse {
+  status: string;
+  session_id: number;
+  session_name: string;
+  class_id: number;
+  parameters: {
+    k: number;
+    similarity_threshold: number;
+    embedding_model?: string;
+    use_voting: boolean;
+  };
+  total_crops: number;
+  crops_to_process: number;
+  crops_assigned: number;
+  crops_unassigned: number;
+  assigned_crops: Array<{
+    crop_id: number;
+    student_id: number;
+    student_name: string | null;
+    confidence: number | null;
+    crop_image_path: string | null;
+  }>;
+  unassigned_crops: Array<{
+    crop_id: number;
+    reason: string;
+    crop_image_path: string | null;
+  }>;
+  message?: string;
+}
+
+export interface SuggestAssignmentsResponse {
+  session_id: number;
+  session_name: string;
+  total_crops: number;
+  parameters: {
+    k: number;
+    embedding_model?: string;
+    include_unidentified: boolean;
+  };
+  suggestions: Array<{
+    crop_id: number;
+    crop_image_path: string | null;
+    image_id: number;
+    similar_faces: Array<{
+      crop_id: number;
+      student_id: number | null;
+      student_name: string | null;
+      similarity: number;
+      distance: number | null;
+      crop_image_path: string;
+      is_identified: boolean;
+    }>;
+  }>;
+}
+
 // Face Crop types
 export interface FaceCrop {
   id: number;
