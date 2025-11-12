@@ -31,7 +31,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - DEBUG=${DEBUG}
-      - ALLOWED_HOSTS=backend,localhost,127.0.0.1
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-*}
       - DB_NAME=attendansee_db
       - DB_USER=attendansee_user
       - DB_PASSWORD=attendansee_user
@@ -44,6 +44,9 @@ services:
       - DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME}
       - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD}
       - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL}
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-4}
+      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-300}
+      - GUNICORN_GRACEFUL_TIMEOUT=${GUNICORN_GRACEFUL_TIMEOUT:-300}
     volumes:
       - ./backend/media:/app/media
     depends_on:

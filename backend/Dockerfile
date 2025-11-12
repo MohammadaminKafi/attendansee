@@ -49,5 +49,5 @@ EXPOSE 8000
 # Set entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Default command - use uv run to execute in the virtual environment
-CMD ["uv", "run", "gunicorn", "attendansee_backend.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4"]
+# Default command - use uv run to execute gunicorn with config file
+CMD ["uv", "run", "gunicorn", "attendansee_backend.wsgi:application", "--config", "gunicorn.conf.py"]
