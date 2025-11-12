@@ -27,9 +27,8 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-c$(6#78fthb(-^a1jahwg#j%q*
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-# Hosts: allow all for development (no filtering of IPs/hosts)
-# Note: Do not use this configuration in production.
-ALLOWED_HOSTS = ['*']
+# Hosts: read from environment variable or allow all for development
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',') if os.getenv('ALLOWED_HOSTS') else ['*']
 
 
 # Application definition
