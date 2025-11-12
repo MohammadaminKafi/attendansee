@@ -4,8 +4,7 @@ FROM python:3.13-slim
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    UV_SYSTEM_PYTHON=1
 
 # Set working directory
 WORKDIR /app
@@ -15,21 +14,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
     g++ \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender-dev \
     libgomp1 \
     netcat-openbsd \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file
-COPY requirements.txt .
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/uv
 
-# Install Python dependencies
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
+
+# Install Python dependencies using uv
+RUN uv sync --frozen --no-dev
 
 # Copy project files
 COPY . .
@@ -46,5 +49,5 @@ EXPOSE 8000
 # Set entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Default command
-CMD ["gunicorn", "attendansee_backend.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4"]
+# Default command - use uv run to execute in the virtual environment
+CMD ["uv", "run", "gunicorn", "attendansee_backend.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4"]

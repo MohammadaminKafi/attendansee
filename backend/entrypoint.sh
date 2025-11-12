@@ -10,10 +10,10 @@ done
 echo "PostgreSQL is ready!"
 
 echo "Running database migrations..."
-python manage.py migrate --noinput
+uv run python manage.py migrate --noinput
 
 echo "Collecting static files..."
-python manage.py collectstatic --noinput --clear
+uv run python manage.py collectstatic --noinput --clear
 
 echo "Starting application..."
 exec "$@"
