@@ -1,156 +1,66 @@
-# AttendanSee Backend
+# Backend (Django)
 
-Django REST API backend for the AttendanSee attendance tracking application.
+APIs and services for face detection, embeddings, clustering/assignment, and attendance.
 
-## Project Structure
+## Stack
+- Django + DRF, PostgreSQL (+ `pgvector`)
+- OpenCV, DeepFace, scikit-learn, TensorFlow Keras
+- Package management: `uv` (workspace at repo root)
 
-```
-backend/
-├── attendansee_backend/  # Main Django project settings
-├── authentication/       # User authentication app (JWT + Djoser)
-├── attendance/          # Attendance tracking app
-├── manage.py
-└── pyproject.toml
-```
+## Capabilities
+- Classes, students, sessions, images, and face crops (with 512D embeddings).
+- Face detection (DeepFace backends: opencv, mtcnn, retinaface, mediapipe, yolov8, yunet, …).
+- Embedding models: `arcface`, `facenet512`.
+- Clustering (agglomerative cosine) and similarity-based auto-assign (KNN) with pgvector.
+- Reports: per-session and per-class attendance matrices and statistics.
 
-## Features
+## Development (uv)
+Run commands from repo root or `backend/` using `uv`.
 
-- JWT-based authentication
-- Custom user model with admin and regular user levels
-- RESTful API using Django REST Framework
-- PostgreSQL database
-- Comprehensive test coverage with pytest
-
-## Setup Instructions
-
-### 1. Install Dependencies
-
-The project uses `uv` for dependency management:
-
+1) Install `uv` (one-time):
 ```bash
-cd backend
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+2) Sync dependencies:
+```bash
 uv sync
 ```
 
-### 2. Configure Environment
+3) Provide a DB and env
+- Set `DB_*` vars (reuse `.env.docker` values) and `DEBUG=True`.
+- Create the database and run migrations.
 
-Copy the example environment file and update it with your settings:
-
+4) Common commands
 ```bash
-cp .env.example .env
-```
-
-Edit `.env` with your database credentials and other settings.
-
-### 3. Create Database
-
-Create a PostgreSQL database:
-
-```bash
-# Using psql
-psql -U postgres
-CREATE DATABASE attendansee_db;
-CREATE USER attendansee_user WITH PASSWORD 'attendansee_user';
-GRANT ALL PRIVILEGES ON DATABASE attendansee_db TO attendansee_user;
-\q
-```
-
-### 4. Run Migrations
-
-```bash
-uv run python manage.py makemigrations
+# from backend/
 uv run python manage.py migrate
-```
-
-### 5. Create Superuser
-
-```bash
-uv run python manage.py createsuperuser
-```
-
-### 6. Run Development Server
-
-```bash
-# For local development (WSL/Linux only)
-uv run python manage.py runserver
-
-# For WSL with Windows access (bind to all interfaces)
 uv run python manage.py runserver 0.0.0.0:8000
+
+# tests
+uv run pytest -q
 ```
 
-**Important for WSL users:** When running Django in WSL and accessing from Windows, use `0.0.0.0:8000` to bind to all network interfaces. This makes the server accessible from Windows at `http://localhost:8000/` or `http://<WSL-IP>:8000/`.
+Notes
+- Serve the full stack via root `docker-compose.yml` for integrated runs.
 
-The API will be available at:
-- From WSL: `http://localhost:8000/` or `http://127.0.0.1:8000/`
-- From Windows (when using `0.0.0.0:8000`): `http://localhost:8000/`
+## Environment
+Key vars (see `.env.docker`):
+- `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`
+- `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`
+- `CORS_ALLOWED_ORIGINS`, `CORS_ALLOW_ALL_ORIGINS`
+- Optional: `DJANGO_SUPERUSER_*` to bootstrap an admin
 
-## Testing
+## API Overview
+- Auth (Djoser JWT): `/api/auth/`
+	- `POST /auth/jwt/create/` (login), `POST /auth/jwt/refresh/`, `GET /auth/users/me/`
+- Attendance: `/api/attendance/`
+	- Classes CRUD: `/classes/`
+	- Class tools: `/{id}/bulk-upload-students/`, `/{id}/statistics/`, `/{id}/attendance-report/`,
+		`/{id}/process-all-images/`, `/{id}/generate-embeddings/`, `/{id}/cluster-crops/`,
+		`/{id}/auto-assign-all-crops/`, `/{id}/suggest-assignments/`
+	- Sessions CRUD: `/sessions/` with `/{id}/face-crops/`, `/{id}/generate-embeddings/`, `/{id}/cluster-crops/`, `/{id}/auto-assign-all-crops/`, `/{id}/suggest-assignments/`
+	- Images CRUD+upload: `/images/` (+ `/{id}/process-image/`, `/{id}/face_crops/`)
+	- Face crops: `/face-crops/` (+ `/{id}/generate-embedding/`, `/{id}/similar-faces/`, `/{id}/assign/`, `/{id}/assign-from-candidate/`, `/{id}/unidentify/`)
 
-Run tests with pytest:
-
-```bash
-# Run all tests
-uv run pytest
-
-# Run with coverage report
-uv run pytest --cov=authentication --cov=attendance
-
-# Run specific test file
-uv run pytest authentication/tests/test_authentication.py
-
-# Run with verbose output
-uv run pytest -v
-```
-
-## API Documentation
-
-### Authentication Endpoints
-
-- `POST /api/auth/jwt/create/` - Login (obtain JWT token)
-- `POST /api/auth/jwt/refresh/` - Refresh access token
-- `POST /api/auth/jwt/verify/` - Verify token validity
-- `POST /api/auth/users/` - Register new user
-- `GET /api/auth/users/me/` - Get current user details
-- `PATCH /api/auth/users/me/` - Update current user
-- `POST /api/auth/users/set_password/` - Change password
-- `GET /api/auth/users/` - List all users (admin only)
-
-### Admin Panel
-
-Access Django admin at `http://localhost:8000/admin/`
-
-## Technology Stack
-
-- **Django 5.2.7** - Web framework
-- **Django REST Framework 3.16.1** - REST API
-- **djangorestframework-simplejwt 5.5.1** - JWT authentication
-- **Djoser 2.3.3** - User management
-- **PostgreSQL** - Database
-- **pytest 8.4.2** - Testing framework
-- **pytest-django 4.11.1** - Django pytest plugin
-- **pytest-cov 7.0.0** - Coverage reporting
-
-## Development
-
-### Code Style
-
-Follow PEP 8 guidelines for Python code.
-
-### Running Migrations
-
-After model changes:
-
-```bash
-uv run python manage.py makemigrations
-uv run python manage.py migrate
-```
-
-### Collecting Static Files
-
-```bash
-uv run python manage.py collectstatic
-```
-
-## License
-
-[Add your license here]
+Swagger UI: `/swagger/`
