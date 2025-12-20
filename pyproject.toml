@@ -11,6 +11,7 @@ dependencies = [
     "matplotlib>=3.10.7",
     "numpy>=2.3.4",
     "opencv-python>=4.11.0.86",
+    "reportlab>=4.4.6",
     "scikit-learn>=1.7.2",
     "tf-keras>=2.20.1",
 ]

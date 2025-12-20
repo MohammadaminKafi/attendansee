@@ -6,6 +6,7 @@ This package contains business logic services that handle:
 - Image processing and manipulation
 - Face embedding generation
 - Face crop clustering
+- PDF report generation
 """
 
 from .face_detection import FaceDetectionService
@@ -13,6 +14,7 @@ from .image_processor import ImageProcessor
 from .embedding_service import EmbeddingService
 from .assignment_service import AssignmentService
 from .clustering_service import ClusteringService
+from .pdf_service import BasePDFService, AttendancePDFService
 
 __all__ = [
     'FaceDetectionService',
@@ -20,4 +22,6 @@ __all__ = [
     'EmbeddingService',
     'AssignmentService',
     'ClusteringService',
+    'BasePDFService',
+    'AttendancePDFService',
 ]
