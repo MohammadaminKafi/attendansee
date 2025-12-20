@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db.models import Count, Q
 from django.utils import timezone
+from django.http import HttpResponse
 import os
 from .models import Class, Student, Session, Image, FaceCrop
 from .serializers import (
@@ -387,6 +388,38 @@ class ClassViewSet(viewsets.ModelViewSet):
             'sessions': session_summary,
             'attendance_matrix': attendance_matrix
         })
+    
+    @action(detail=True, methods=['get'], url_path='export-attendance-pdf')
+    def export_attendance_pdf(self, request, pk=None):
+        """
+        Export attendance report as PDF with face crop images.
+        
+        Generates a PDF report showing each student's attendance with one face crop
+        image from each attended session along with session information.
+        
+        Returns:
+        - PDF file download
+        """
+        from .services import AttendancePDFService
+        
+        class_obj = self.get_object()
+        
+        # Generate the PDF using the service
+        try:
+            pdf_service = AttendancePDFService(class_obj)
+            pdf_buffer = pdf_service.generate_report()
+            
+            # Create the HTTP response with PDF
+            response = HttpResponse(pdf_buffer.getvalue(), content_type='application/pdf')
+            filename = f"{class_obj.name.replace(' ', '_')}_attendance_report.pdf"
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            
+            return response
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate PDF: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=True, methods=['post'], url_path='process-all-images')
     def process_all_images(self, request, pk=None):

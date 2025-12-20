@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { classesAPI } from '@/services/api';
 import { AttendanceReport } from '@/types';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Badge } from '@/components/ui/Badge';
-import { CheckCircle, XCircle, Download } from 'lucide-react';
+import { CheckCircle, XCircle, Download, FileText, ChevronDown } from 'lucide-react';
 
 interface ReportTabProps {
   classId: number;
@@ -13,10 +13,27 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
   const [report, setReport] = useState<AttendanceReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exportingPDF, setExportingPDF] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadReport();
   }, [classId]);
+
+  useEffect(() => {
+    // Close dropdown when clicking outside
+    const handleClickOutside = (event: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const loadReport = async () => {
     try {
@@ -34,6 +51,8 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
 
   const exportToCSV = () => {
     if (!report) return;
+
+    setShowExportMenu(false);
 
     // Prepare CSV header
     const headers = ['Student Name', 'Student ID', 'Email', 'Attendance Rate'];
@@ -74,6 +93,43 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const exportToPDF = async () => {
+    if (!report) return;
+
+    setShowExportMenu(false);
+    setExportingPDF(true);
+    
+    try {
+      const blob = await classesAPI.exportAttendancePDF(classId);
+      
+      // Verify we got a valid blob
+      if (!blob || !(blob instanceof Blob)) {
+        throw new Error('Invalid response from server');
+      }
+      
+      // Download PDF file
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `${report.class_name.replace(/ /g, '_')}_attendance_report.pdf`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      
+      // Clean up after a short delay to ensure download starts
+      setTimeout(() => {
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        setExportingPDF(false);
+      }, 100);
+    } catch (error: any) {
+      console.error('Failed to export PDF:', error);
+      console.error('Error details:', error?.response?.data, error?.message);
+      alert('Failed to export PDF. Please try again.');
+      setExportingPDF(false);
+    }
   };
 
   if (loading) {
@@ -118,13 +174,36 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
             {report.total_students} students × {report.total_sessions} sessions
           </p>
         </div>
-        <button
-          onClick={exportToCSV}
-          className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark rounded-lg text-white transition-colors"
-        >
-          <Download className="w-4 h-4" />
-          Export CSV
-        </button>
+        <div className="relative" ref={exportMenuRef}>
+          <button
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            disabled={exportingPDF}
+            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark rounded-lg text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download className="w-4 h-4" />
+            {exportingPDF ? 'Exporting...' : 'Export'}
+            <ChevronDown className="w-4 h-4" />
+          </button>
+          
+          {showExportMenu && !exportingPDF && (
+            <div className="absolute right-0 mt-2 w-48 bg-dark-card border border-dark-border rounded-lg shadow-lg z-10">
+              <button
+                onClick={exportToCSV}
+                className="w-full flex items-center gap-2 px-4 py-3 text-white hover:bg-dark-hover transition-colors text-left rounded-t-lg"
+              >
+                <Download className="w-4 h-4" />
+                Export as CSV
+              </button>
+              <button
+                onClick={exportToPDF}
+                className="w-full flex items-center gap-2 px-4 py-3 text-white hover:bg-dark-hover transition-colors text-left rounded-b-lg border-t border-dark-border"
+              >
+                <FileText className="w-4 h-4" />
+                Export as PDF
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Attendance Table */}

@@ -195,6 +195,13 @@ export const classesAPI = {
     return response.data;
   },
 
+  exportAttendancePDF: async (id: number): Promise<Blob> => {
+    const response = await api.get(`/attendance/classes/${id}/export-attendance-pdf/`, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
   processAllImages: async (
     id: number,
     options?: BulkProcessImagesData
