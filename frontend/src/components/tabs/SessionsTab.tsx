@@ -140,7 +140,16 @@ export const SessionsTab: React.FC<SessionsTabProps> = ({ classId, onUpdate }) =
     if (!editingSession) return;
 
     try {
-      await sessionsAPI.updateSession(editingSession.id, formData as UpdateSessionData);
+      // Only send fields that are part of UpdateSessionData interface
+      const updateData: UpdateSessionData = {
+        name: formData.name,
+        date: formData.date,
+        start_time: formData.start_time || null,
+        end_time: formData.end_time || null,
+        notes: formData.notes,
+      };
+      
+      await sessionsAPI.updateSession(editingSession.id, updateData);
       setShowModal(false);
       await loadSessions();
       onUpdate?.();
