@@ -71,7 +71,7 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
 
       // Add attendance for each session
       student.session_attendance.forEach((attendance) => {
-        row.push(attendance.present ? 'Present' : 'Absent');
+        row.push(attendance.present ? '1' : '0');
       });
 
       return row;
@@ -83,8 +83,12 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
       ...rows.map((row) => row.map((cell) => `"${cell}"`).join(',')),
     ].join('\n');
 
+    // Add UTF-8 BOM (Byte Order Mark) to ensure proper encoding of non-ASCII characters
+    const BOM = '\uFEFF';
+    const csvWithBOM = BOM + csvContent;
+
     // Download CSV file
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([csvWithBOM], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
