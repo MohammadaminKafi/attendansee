@@ -137,9 +137,14 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
     try {
       const blob = await classesAPI.exportAttendancePDF(classId);
       
-      // Verify we got a valid blob
-      if (!blob || !(blob instanceof Blob)) {
+      // Verify we got a valid blob with PDF content
+      if (!blob || !(blob instanceof Blob) || blob.size === 0) {
         throw new Error('Invalid response from server');
+      }
+      
+      // Verify it's actually a PDF
+      if (blob.type && !blob.type.includes('pdf') && !blob.type.includes('application/octet-stream')) {
+        throw new Error(`Unexpected content type: ${blob.type}`);
       }
       
       // Download PDF file
@@ -150,13 +155,15 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
       link.style.visibility = 'hidden';
       document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
       
-      // Clean up after a short delay to ensure download starts
+      // Clean up
       setTimeout(() => {
-        document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        setExportingPDF(false);
       }, 100);
+      
+      // Reset state immediately after triggering download
+      setExportingPDF(false);
     } catch (error: any) {
       console.error('Failed to export PDF:', error);
       console.error('Error details:', error?.response?.data, error?.message);
