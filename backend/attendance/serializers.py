@@ -44,14 +44,24 @@ class StudentSerializer(serializers.ModelSerializer):
     """
     full_name = serializers.ReadOnlyField()
     class_name = serializers.ReadOnlyField(source='class_enrolled.name')
+    profile_picture = serializers.SerializerMethodField()
     
     class Meta:
         model = Student
         fields = [
             'id', 'class_enrolled', 'class_name', 'first_name', 
-            'last_name', 'full_name', 'student_id', 'email', 'created_at'
+            'last_name', 'full_name', 'student_id', 'email', 'profile_picture', 'created_at'
         ]
-        read_only_fields = ['id', 'created_at', 'full_name', 'class_name']
+        read_only_fields = ['id', 'created_at', 'full_name', 'class_name', 'profile_picture']
+    
+    def get_profile_picture(self, obj):
+        """Return the URL for the profile picture."""
+        if obj.profile_picture:
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(obj.profile_picture.url)
+            return obj.profile_picture.url
+        return None
     
     def validate_class_enrolled(self, value):
         """

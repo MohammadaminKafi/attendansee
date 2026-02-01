@@ -154,6 +154,45 @@ const ImageDetailPage: React.FC = () => {
     }
   };
 
+  const handleCreateAndAssignNewStudent = async () => {
+    if (!assigningCropId || !classId) return;
+
+    try {
+      const result = await faceCropsAPI.createAndAssignStudent(
+        assigningCropId,
+        parseInt(classId)
+      );
+
+      if (result.assigned && result.student) {
+        // Update local state
+        setFaceCrops((prev) =>
+          prev.map((crop) =>
+            crop.id === assigningCropId
+              ? {
+                  ...crop,
+                  student: result.student.id,
+                  student_name: result.student.full_name,
+                  is_identified: true,
+                }
+              : crop
+          )
+        );
+
+        // Add the new student to the students list
+        setStudents((prev) => [...prev, result.student]);
+
+        setShowAssignModal(false);
+        setAssigningCropId(null);
+        setSelectedStudentId(null);
+      } else {
+        setError('Failed to create and assign new student');
+      }
+    } catch (err: any) {
+      console.error('Error creating and assigning student:', err);
+      setError(err.response?.data?.error || 'Failed to create and assign new student');
+    }
+  };
+
   const handleUnassignStudent = async (cropId: number) => {
     try {
       await faceCropsAPI.unidentifyFaceCrop(cropId);
@@ -639,7 +678,18 @@ const ImageDetailPage: React.FC = () => {
             </p>
           )}
 
-          <div className="flex gap-3 pt-4">
+          <div className="flex gap-3 pt-4 border-t border-dark-border">
+            {classId && (
+              <Button
+                onClick={handleCreateAndAssignNewStudent}
+                disabled={!assigningCropId}
+                variant="secondary"
+                className="flex-1"
+              >
+                <UserPlus className="w-4 h-4 mr-2" />
+                Create New
+              </Button>
+            )}
             <Button
               variant="secondary"
               onClick={() => {

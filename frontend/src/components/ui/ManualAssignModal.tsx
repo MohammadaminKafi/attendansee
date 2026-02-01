@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from './Modal';
 import { Button } from './Button';
-import { ChevronLeft, ChevronRight, UserCheck, X as XIcon, AlertCircle, CheckCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, UserCheck, UserPlus, X as XIcon, AlertCircle, CheckCircle } from 'lucide-react';
 import { faceCropsAPI } from '@/services/api';
 
 interface SimilarFace {
@@ -26,6 +26,10 @@ interface ManualAssignModalProps {
   onClose: () => void;
   suggestions: CropSuggestion[];
   onUpdate: () => void;
+  classId: number;
+  similarFacesCount: number;
+  onChangeSimilarFacesCount: (count: number) => void;
+  isLoading?: boolean;
 }
 
 export const ManualAssignModal: React.FC<ManualAssignModalProps> = ({
@@ -33,6 +37,10 @@ export const ManualAssignModal: React.FC<ManualAssignModalProps> = ({
   onClose,
   suggestions,
   onUpdate,
+  classId,
+  similarFacesCount,
+  onChangeSimilarFacesCount,
+  isLoading = false,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [processing, setProcessing] = useState(false);
@@ -126,11 +134,59 @@ export const ManualAssignModal: React.FC<ManualAssignModalProps> = ({
           setSuccessMessage(null);
         }, 800);
       } else {
-        setError(result.message || 'Failed to assign crop');
+        setError(result.message || 'Failed to assign');
       }
     } catch (err: any) {
-      console.error('Error assigning from candidate:', err);
+      console.error('Error assigning crop:', err);
       setError(err.response?.data?.error || 'Failed to assign crop');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleCreateAndAssignNewStudent = async () => {
+    if (!currentCrop) return;
+
+    try {
+      setProcessing(true);
+      setError(null);
+      setSuccessMessage(null);
+
+      const result = await faceCropsAPI.createAndAssignStudent(
+        currentCrop.crop_id,
+        classId
+      );
+
+      if (result.assigned && result.student_name) {
+        setSuccessMessage(`Created and assigned to ${result.student_name}`);
+        setAssignedCrops(prev => new Set(prev).add(currentCrop.crop_id));
+        
+        // Move to next unassigned crop after a short delay
+        setTimeout(() => {
+          const nextUnassigned = suggestions.findIndex(
+            (s, idx) => idx > currentIndex && !assignedCrops.has(s.crop_id)
+          );
+          if (nextUnassigned !== -1) {
+            setCurrentIndex(nextUnassigned);
+          } else {
+            // Check if there are any unassigned crops before current
+            const prevUnassigned = suggestions.findIndex(s => !assignedCrops.has(s.crop_id));
+            if (prevUnassigned !== -1) {
+              setCurrentIndex(prevUnassigned);
+            } else {
+              // All crops assigned, close modal
+              onUpdate();
+              onClose();
+            }
+          }
+          setSuccessMessage(null);
+        }, 800);
+      } else {
+        setError('Failed to create and assign new student');
+      }
+    } catch (err: any) {
+      console.error('Error creating and assigning student:', err);
+      setError(err.response?.data?.error || 'Failed to create and assign new student');
     } finally {
       setProcessing(false);
     }
@@ -160,8 +216,8 @@ export const ManualAssignModal: React.FC<ManualAssignModalProps> = ({
   const isCurrentCropAssigned = assignedCrops.has(currentCrop.crop_id);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Manual Face Assignment" className="max-w-4xl">
-      <div className="space-y-4">
+    <Modal isOpen={isOpen} onClose={onClose} title="Manual Face Assignment" className="max-w-4xl max-h-[90vh]">
+      <div className="space-y-4 overflow-y-auto max-h-[calc(90vh-8rem)] pr-2">
         {/* Progress Bar */}
         <div className="space-y-1.5">
           <div className="flex justify-between text-xs">
@@ -250,14 +306,33 @@ export const ManualAssignModal: React.FC<ManualAssignModalProps> = ({
         {/* Similar Faces Grid */}
         <div className="border border-dark-border rounded-lg overflow-hidden">
           <div className="bg-dark-hover p-3">
-            <h3 className="text-base font-semibold text-white">
-              Top-5 Similar Faces - Choose One to Assign
-            </h3>
-            <p className="text-xs text-gray-400 mt-1">
-              Select a face to assign the same student to the current crop
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-base font-semibold text-white">
+                Top-{similarFacesCount} Similar Faces
+              </h3>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400">Show:</span>
+                {[5, 10, 15, 20].map((count) => (
+                  <button
+                    key={count}
+                    onClick={() => onChangeSimilarFacesCount(count)}
+                    disabled={isLoading}
+                    className={`px-2 py-1 text-xs rounded transition-colors ${
+                      similarFacesCount === count
+                        ? 'bg-primary text-white'
+                        : 'bg-dark-bg text-gray-400 hover:bg-dark-card hover:text-white'
+                    } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    {count}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-gray-400">
+              Select a face to assign the same student, or create a new student
             </p>
           </div>
-          <div className="p-4 bg-dark-bg">
+          <div className="p-4 bg-dark-bg max-h-[50vh] overflow-y-auto">
             {currentCrop.similar_faces.length === 0 ? (
               <div className="text-center py-6">
                 <AlertCircle className="w-10 h-10 text-gray-500 mx-auto mb-2" />
@@ -265,10 +340,19 @@ export const ManualAssignModal: React.FC<ManualAssignModalProps> = ({
                 <p className="text-xs text-gray-500 mt-1">
                   This crop may need more labeled data in the class
                 </p>
+                <Button
+                  onClick={handleCreateAndAssignNewStudent}
+                  disabled={processing || isCurrentCropAssigned}
+                  className="mt-4"
+                >
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Create New Student
+                </Button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-                {currentCrop.similar_faces.map((face) => (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {currentCrop.similar_faces.map((face) => (
                   <div
                     key={face.crop_id}
                     className={`rounded-lg border overflow-hidden transition-all ${
@@ -324,6 +408,18 @@ export const ManualAssignModal: React.FC<ManualAssignModalProps> = ({
                   </div>
                 ))}
               </div>
+              <div className="mt-4 pt-4 border-t border-dark-border flex justify-center">
+                <Button
+                  onClick={handleCreateAndAssignNewStudent}
+                  disabled={processing || isCurrentCropAssigned}
+                  variant="secondary"
+                  className="w-full max-w-md"
+                >
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Create New Student
+                </Button>
+              </div>
+            </>
             )}
           </div>
         </div>

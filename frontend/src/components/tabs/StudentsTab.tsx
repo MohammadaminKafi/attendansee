@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { studentsAPI, sessionsAPI } from '@/services/api';
 import { Student, CreateStudentData, UpdateStudentData } from '@/types';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { Eye, Edit2, Trash2, GitMerge, X } from 'lucide-react';
+import { Eye, Edit2, Trash2, GitMerge, X, User, Upload as UploadIcon, XCircle } from 'lucide-react';
 
 interface StudentsTabProps {
   classId: number;
@@ -20,6 +20,7 @@ interface StudentWithAttendance extends Student {
 
 export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) => {
   const navigate = useNavigate();
+  const profilePictureInputRef = useRef<HTMLInputElement>(null);
   const [students, setStudents] = useState<StudentWithAttendance[]>([]);
   const [filteredStudents, setFilteredStudents] = useState<StudentWithAttendance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +38,11 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [hasHeader, setHasHeader] = useState(true);
   const [uploadResult, setUploadResult] = useState<any>(null);
+  
+  // Profile picture state
+  const [profilePictureFile, setProfilePictureFile] = useState<File | null>(null);
+  const [profilePicturePreview, setProfilePicturePreview] = useState<string | null>(null);
+  const [uploadingProfilePicture, setUploadingProfilePicture] = useState(false);
   
   // Merge functionality state
   const [mergeMode, setMergeMode] = useState(false);
@@ -119,6 +125,8 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
       email: '',
       class_enrolled: classId,
     });
+    setProfilePictureFile(null);
+    setProfilePicturePreview(null);
     setShowModal(true);
   };
 
@@ -131,6 +139,8 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
       email: student.email || '',
       class_enrolled: classId,
     });
+    setProfilePictureFile(null);
+    setProfilePicturePreview(student.profile_picture);
     setShowModal(true);
   };
 
@@ -157,17 +167,88 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
     e.preventDefault();
 
     try {
+      let savedStudent: Student;
+      
       if (editingStudent) {
-        await studentsAPI.updateStudent(editingStudent.id, formData as UpdateStudentData);
+        savedStudent = await studentsAPI.updateStudent(editingStudent.id, formData as UpdateStudentData);
       } else {
-        await studentsAPI.createStudent(formData);
+        savedStudent = await studentsAPI.createStudent(formData);
       }
+      
+      // Upload profile picture if a new file was selected
+      if (profilePictureFile && savedStudent.id) {
+        try {
+          setUploadingProfilePicture(true);
+          await studentsAPI.uploadProfilePicture(savedStudent.id, profilePictureFile);
+        } catch (uploadError) {
+          console.error('Failed to upload profile picture:', uploadError);
+          alert('Student saved but failed to upload profile picture');
+        } finally {
+          setUploadingProfilePicture(false);
+        }
+      }
+      
       setShowModal(false);
+      setProfilePictureFile(null);
+      setProfilePicturePreview(null);
       await loadStudents();
       onUpdate?.();
     } catch (error: any) {
       console.error('Failed to save student:', error);
       alert(error.response?.data?.detail || 'Failed to save student');
+    }
+  };
+  
+  const handleProfilePictureSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    // Validate file size (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('File size too large. Maximum size is 5MB.');
+      return;
+    }
+    
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      alert('Invalid file type. Please upload an image file.');
+      return;
+    }
+    
+    setProfilePictureFile(file);
+    
+    // Create preview
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setProfilePicturePreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+  
+  const handleRemoveProfilePicture = async () => {
+    if (editingStudent?.profile_picture) {
+      // If editing and has existing picture, delete from server
+      try {
+        setUploadingProfilePicture(true);
+        await studentsAPI.deleteProfilePicture(editingStudent.id);
+        setProfilePicturePreview(null);
+        setProfilePictureFile(null);
+        await loadStudents();
+        // Update editingStudent state
+        setEditingStudent({ ...editingStudent, profile_picture: null });
+      } catch (error) {
+        console.error('Failed to delete profile picture:', error);
+        alert('Failed to delete profile picture');
+      } finally {
+        setUploadingProfilePicture(false);
+      }
+    } else {
+      // Just clear the preview if it's a new upload
+      setProfilePicturePreview(null);
+      setProfilePictureFile(null);
+      if (profilePictureInputRef.current) {
+        profilePictureInputRef.current.value = '';
+      }
     }
   };
 
@@ -335,25 +416,42 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
               }}
             >
               <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <h3 className={`text-lg font-semibold transition-colors ${
-                    mergeMode && sourceStudentForMerge?.id !== student.id
-                      ? 'text-success'
-                      : 'text-gray-100 group-hover:text-primary'
-                  }`}>
-                    {student.first_name} {student.last_name}
-                    {mergeMode && sourceStudentForMerge?.id === student.id && (
-                      <span className="ml-2 text-xs text-primary">(Source)</span>
+                <div className="flex items-center gap-4 flex-1">
+                  {/* Profile Picture */}
+                  <div className="w-12 h-12 rounded-full overflow-hidden bg-dark-hover flex-shrink-0 border-2 border-dark-border">
+                    {student.profile_picture ? (
+                      <img
+                        src={student.profile_picture}
+                        alt={student.full_name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-gray-400">
+                        <User size={24} />
+                      </div>
                     )}
-                  </h3>
-                  <div className="flex gap-4 mt-1 text-sm text-gray-400">
-                    <span>ID: {student.student_id}</span>
-                    {student.email && <span>Email: {student.email}</span>}
-                    {student.total_sessions !== undefined && (
-                      <span className="text-primary font-medium">
-                        Attendance: {student.attended_sessions || 0}/{student.total_sessions}
-                      </span>
-                    )}
+                  </div>
+                  
+                  <div className="flex-1">
+                    <h3 className={`text-lg font-semibold transition-colors ${
+                      mergeMode && sourceStudentForMerge?.id !== student.id
+                        ? 'text-success'
+                        : 'text-gray-100 group-hover:text-primary'
+                    }`}>
+                      {student.first_name} {student.last_name}
+                      {mergeMode && sourceStudentForMerge?.id === student.id && (
+                        <span className="ml-2 text-xs text-primary">(Source)</span>
+                      )}
+                    </h3>
+                    <div className="flex gap-4 mt-1 text-sm text-gray-400">
+                      <span>ID: {student.student_id}</span>
+                      {student.email && <span>Email: {student.email}</span>}
+                      {student.total_sessions !== undefined && (
+                        <span className="text-primary font-medium">
+                          Attendance: {student.attended_sessions || 0}/{student.total_sessions}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 {!mergeMode && (
@@ -413,6 +511,67 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
         title={editingStudent ? 'Edit Student' : 'Add Student'}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Profile Picture Section */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Profile Picture (Optional)
+            </label>
+            <div className="flex items-center gap-4">
+              {/* Preview */}
+              <div className="w-20 h-20 rounded-full overflow-hidden bg-dark-hover flex-shrink-0 border-2 border-dark-border">
+                {profilePicturePreview ? (
+                  <img
+                    src={profilePicturePreview}
+                    alt="Profile preview"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-gray-400">
+                    <User size={32} />
+                  </div>
+                )}
+              </div>
+              
+              {/* Upload/Delete Controls */}
+              <div className="flex flex-col gap-2">
+                <input
+                  ref={profilePictureInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleProfilePictureSelect}
+                  className="hidden"
+                  disabled={uploadingProfilePicture}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => profilePictureInputRef.current?.click()}
+                  disabled={uploadingProfilePicture}
+                >
+                  <UploadIcon className="w-4 h-4 mr-2" />
+                  {profilePicturePreview ? 'Change Picture' : 'Upload Picture'}
+                </Button>
+                {profilePicturePreview && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleRemoveProfilePicture}
+                    disabled={uploadingProfilePicture}
+                    className="text-danger hover:text-danger"
+                  >
+                    <XCircle className="w-4 h-4 mr-2" />
+                    Remove Picture
+                  </Button>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              Accepted formats: JPEG, PNG, GIF, WebP. Max size: 5MB
+            </p>
+          </div>
+          
           <Input
             label="First Name"
             required
@@ -444,7 +603,9 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({ classId, onUpdate }) =
             <Button type="button" variant="secondary" onClick={() => setShowModal(false)}>
               Cancel
             </Button>
-            <Button type="submit">{editingStudent ? 'Update' : 'Add'}</Button>
+            <Button type="submit" disabled={uploadingProfilePicture}>
+              {uploadingProfilePicture ? 'Uploading...' : editingStudent ? 'Update' : 'Add'}
+            </Button>
           </div>
         </form>
       </Modal>

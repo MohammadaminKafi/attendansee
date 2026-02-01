@@ -64,6 +64,7 @@ const SessionDetailPage: React.FC = () => {
   const [showManualAssignModal, setShowManualAssignModal] = useState(false);
   const [manualAssignSuggestions, setManualAssignSuggestions] = useState<SuggestAssignmentsResponse | null>(null);
   const [loadingManualSuggestions, setLoadingManualSuggestions] = useState(false);
+  const [similarFacesCount, setSimilarFacesCount] = useState<number>(5);
 
   useEffect(() => {
     loadData();
@@ -402,7 +403,7 @@ const SessionDetailPage: React.FC = () => {
       setError(null);
 
       const result = await sessionsAPI.getSuggestAssignments(parseInt(sessionId), {
-        k: 5,
+        k: similarFacesCount,
         include_unidentified: true,
       });
 
@@ -428,6 +429,24 @@ const SessionDetailPage: React.FC = () => {
     if (sessionId) {
       const updatedSession = await sessionsAPI.getSession(parseInt(sessionId));
       setSession(updatedSession);
+    }
+  };
+
+  const handleChangeSimilarFacesCount = async (newCount: number) => {
+    setSimilarFacesCount(newCount);
+    if (showManualAssignModal && sessionId) {
+      try {
+        setLoadingManualSuggestions(true);
+        const result = await sessionsAPI.getSuggestAssignments(parseInt(sessionId), {
+          k: newCount,
+          include_unidentified: true,
+        });
+        setManualAssignSuggestions(result);
+      } catch (err: any) {
+        console.error('Error reloading suggestions:', err);
+      } finally {
+        setLoadingManualSuggestions(false);
+      }
     }
   };
 
@@ -715,6 +734,7 @@ const SessionDetailPage: React.FC = () => {
             title=""
             description=""
             showImageInfo={true}
+            classId={classId ? parseInt(classId) : undefined}
           />
         </Card>
       )}
@@ -868,7 +888,7 @@ const SessionDetailPage: React.FC = () => {
       )}
 
       {/* Manual Assignment Modal */}
-      {manualAssignSuggestions && (
+      {manualAssignSuggestions && classId && (
         <ManualAssignModal
           isOpen={showManualAssignModal}
           onClose={() => {
@@ -877,6 +897,10 @@ const SessionDetailPage: React.FC = () => {
           }}
           suggestions={manualAssignSuggestions.suggestions}
           onUpdate={handleManualAssignUpdate}
+          classId={parseInt(classId)}
+          similarFacesCount={similarFacesCount}
+          onChangeSimilarFacesCount={handleChangeSimilarFacesCount}
+          isLoading={loadingManualSuggestions}
         />
       )}
 

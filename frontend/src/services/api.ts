@@ -398,6 +398,34 @@ export const studentsAPI = {
     return response.data;
   },
 
+  uploadProfilePicture: async (studentId: number, file: File): Promise<{ message: string; student: Student }> => {
+    const formData = new FormData();
+    formData.append('profile_picture', file);
+
+    const response = await api.post(
+      `/attendance/students/${studentId}/profile-picture/`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
+    return response.data;
+  },
+
+  deleteProfilePicture: async (studentId: number): Promise<{ message: string; student: Student }> => {
+    const response = await api.delete(`/attendance/students/${studentId}/profile-picture/`);
+    return response.data;
+  },
+
+  setProfilePictureFromCrop: async (studentId: number, faceCropId: number): Promise<{ message: string; student: Student }> => {
+    const response = await api.post(`/attendance/students/${studentId}/set-profile-from-crop/`, {
+      face_crop_id: faceCropId,
+    });
+    return response.data;
+  },
+
   bulkUploadStudents: async (classId: number, file: File, hasHeader: boolean): Promise<{
     created: Student[];
     total_created: number;
@@ -564,6 +592,27 @@ export const faceCropsAPI = {
   }> => {
     const response = await api.post(`/attendance/face-crops/${id}/assign-from-candidate/`, {
       candidate_crop_id: candidateCropId,
+      confidence,
+    });
+    return response.data;
+  },
+
+  createAndAssignStudent: async (
+    id: number,
+    classId: number,
+    confidence?: number
+  ): Promise<{
+    status: string;
+    crop_id: number;
+    assigned: boolean;
+    student_id: number;
+    student_name: string;
+    student: Student;
+    confidence?: number;
+    message: string;
+  }> => {
+    const response = await api.post(`/attendance/face-crops/${id}/create-and-assign-student/`, {
+      class_id: classId,
       confidence,
     });
     return response.data;

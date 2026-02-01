@@ -519,3 +519,157 @@ class TestAggregateClass:
         assert student1_stats is not None
         assert 'attended_sessions' in student1_stats
         assert 'attendance_rate' in student1_stats
+
+
+@pytest.mark.django_db
+class TestCreateAndAssignStudent:
+    """Test cases for creating new student and assigning face crop in one action."""
+    
+    def test_create_and_assign_student_success(self, authenticated_client, test_class, image1):
+        """Test successfully creating a new student and assigning a face crop."""
+        # Create an unidentified face crop
+        face_crop = FaceCrop.objects.create(
+            image=image1,
+            coordinates='100,100,50,50',
+            is_identified=False
+        )
+        
+        url = reverse('attendance:facecrop-create-and-assign-student', kwargs={'pk': face_crop.pk})
+        response = authenticated_client.post(
+            url,
+            {'class_id': test_class.id},
+            format='json'
+        )
+        
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] == 'success'
+        assert response.data['assigned'] is True
+        assert 'student_id' in response.data
+        assert 'student_name' in response.data
+        assert 'student' in response.data
+        
+        # Verify student was created
+        student_id = response.data['student_id']
+        student = Student.objects.get(id=student_id)
+        assert student.class_enrolled == test_class
+        assert student.first_name == 'Student'
+        assert student.last_name == '#1'
+        
+        # Verify face crop was assigned
+        face_crop.refresh_from_db()
+        assert face_crop.student == student
+        assert face_crop.is_identified is True
+    
+    def test_create_and_assign_with_confidence(self, authenticated_client, test_class, image1):
+        """Test creating and assigning with confidence score."""
+        face_crop = FaceCrop.objects.create(
+            image=image1,
+            coordinates='100,100,50,50',
+            is_identified=False
+        )
+        
+        url = reverse('attendance:facecrop-create-and-assign-student', kwargs={'pk': face_crop.pk})
+        response = authenticated_client.post(
+            url,
+            {'class_id': test_class.id, 'confidence': 0.85},
+            format='json'
+        )
+        
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['confidence'] == 0.85
+        
+        # Verify confidence was stored
+        face_crop.refresh_from_db()
+        assert face_crop.confidence_score == 0.85
+    
+    def test_create_multiple_students_with_unique_names(self, authenticated_client, test_class, image1):
+        """Test that multiple students get unique default names."""
+        # Create first student
+        face_crop1 = FaceCrop.objects.create(
+            image=image1,
+            coordinates='100,100,50,50',
+            is_identified=False
+        )
+        
+        url1 = reverse('attendance:facecrop-create-and-assign-student', kwargs={'pk': face_crop1.pk})
+        response1 = authenticated_client.post(
+            url1,
+            {'class_id': test_class.id},
+            format='json'
+        )
+        
+        assert response1.status_code == status.HTTP_200_OK
+        student1_name = response1.data['student_name']
+        
+        # Create second student
+        face_crop2 = FaceCrop.objects.create(
+            image=image1,
+            coordinates='200,200,50,50',
+            is_identified=False
+        )
+        
+        url2 = reverse('attendance:facecrop-create-and-assign-student', kwargs={'pk': face_crop2.pk})
+        response2 = authenticated_client.post(
+            url2,
+            {'class_id': test_class.id},
+            format='json'
+        )
+        
+        assert response2.status_code == status.HTTP_200_OK
+        student2_name = response2.data['student_name']
+        
+        # Names should be different
+        assert student1_name != student2_name
+        assert student1_name == 'Student #1'
+        assert student2_name == 'Student #2'
+    
+    def test_create_and_assign_missing_class_id(self, authenticated_client, test_class, image1):
+        """Test error when class_id is not provided."""
+        face_crop = FaceCrop.objects.create(
+            image=image1,
+            coordinates='100,100,50,50',
+            is_identified=False
+        )
+        
+        url = reverse('attendance:facecrop-create-and-assign-student', kwargs={'pk': face_crop.pk})
+        response = authenticated_client.post(url, {}, format='json')
+        
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'class_id is required' in response.data['error']
+    
+    def test_create_and_assign_invalid_class_id(self, authenticated_client, test_class, image1):
+        """Test error when class_id doesn't exist."""
+        face_crop = FaceCrop.objects.create(
+            image=image1,
+            coordinates='100,100,50,50',
+            is_identified=False
+        )
+        
+        url = reverse('attendance:facecrop-create-and-assign-student', kwargs={'pk': face_crop.pk})
+        response = authenticated_client.post(
+            url,
+            {'class_id': 99999},
+            format='json'
+        )
+        
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+    
+    def test_create_and_assign_permission_denied(self, authenticated_client, another_user, image1):
+        """Test that users cannot create students in other users' classes."""
+        # Create a class owned by another user
+        other_class = Class.objects.create(owner=another_user, name='Other Class')
+        
+        face_crop = FaceCrop.objects.create(
+            image=image1,
+            coordinates='100,100,50,50',
+            is_identified=False
+        )
+        
+        url = reverse('attendance:facecrop-create-and-assign-student', kwargs={'pk': face_crop.pk})
+        response = authenticated_client.post(
+            url,
+            {'class_id': other_class.id},
+            format='json'
+        )
+        
+        assert response.status_code == status.HTTP_403_FORBIDDEN

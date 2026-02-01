@@ -49,6 +49,13 @@ class Student(models.Model):
     last_name = models.CharField(max_length=150, validators=[MinLengthValidator(1)])
     student_id = models.CharField(max_length=50, blank=True, default='')
     email = models.EmailField(blank=True, default='')
+    profile_picture = models.ImageField(
+        upload_to='student_profiles/',
+        max_length=500,
+        blank=True,
+        null=True,
+        help_text='Optional profile picture for the student'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:

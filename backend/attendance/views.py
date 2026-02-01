@@ -1189,6 +1189,179 @@ class StudentViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    @action(
+        detail=True, 
+        methods=['post', 'delete'], 
+        url_path='profile-picture',
+        parser_classes=[MultiPartParser, FormParser]
+    )
+    def profile_picture(self, request, pk=None):
+        """
+        Upload or delete a student's profile picture.
+        
+        POST: Upload a new profile picture
+        - Accepts multipart/form-data with 'profile_picture' file field
+        - Replaces existing profile picture if one exists
+        
+        DELETE: Remove the student's profile picture
+        
+        Returns:
+        - Updated student data with profile picture URL
+        """
+        student = self.get_object()
+        
+        if request.method == 'DELETE':
+            # Delete the profile picture
+            if student.profile_picture:
+                student.profile_picture.delete(save=False)
+                student.profile_picture = None
+                student.save(update_fields=['profile_picture'])
+            
+            serializer = self.get_serializer(student)
+            return Response({
+                'message': 'Profile picture deleted successfully',
+                'student': serializer.data
+            }, status=status.HTTP_200_OK)
+        
+        # POST - Upload new profile picture
+        if 'profile_picture' not in request.FILES:
+            return Response(
+                {'error': 'No profile picture file provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        profile_picture = request.FILES['profile_picture']
+        
+        # Validate file size (max 5MB)
+        max_size = 5 * 1024 * 1024  # 5MB
+        if profile_picture.size > max_size:
+            return Response(
+                {'error': 'File size too large. Maximum size is 5MB.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate file type
+        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+        if profile_picture.content_type not in allowed_types:
+            return Response(
+                {'error': 'Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Delete old profile picture if exists
+        if student.profile_picture:
+            student.profile_picture.delete(save=False)
+        
+        # Save new profile picture
+        student.profile_picture = profile_picture
+        student.save(update_fields=['profile_picture'])
+        
+        serializer = self.get_serializer(student)
+        return Response({
+            'message': 'Profile picture uploaded successfully',
+            'student': serializer.data
+        }, status=status.HTTP_200_OK)
+    
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='set-profile-from-crop'
+    )
+    def set_profile_from_crop(self, request, pk=None):
+        """
+        Set a student's profile picture from an existing face crop.
+        
+        POST: Copy face crop image to be the student's profile picture
+        - Requires 'face_crop_id' in request data
+        - Face crop must belong to this student
+        
+        Returns:
+        - Updated student data with new profile picture URL
+        """
+        student = self.get_object()
+        
+        face_crop_id = request.data.get('face_crop_id')
+        if not face_crop_id:
+            return Response(
+                {'error': 'face_crop_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get the face crop
+        try:
+            face_crop = FaceCrop.objects.get(id=face_crop_id)
+        except FaceCrop.DoesNotExist:
+            return Response(
+                {'error': f'Face crop with ID {face_crop_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify the face crop belongs to this student
+        if face_crop.student_id != student.id:
+            return Response(
+                {'error': 'This face crop does not belong to this student'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if face crop has an image file
+        if not face_crop.crop_image_path:
+            return Response(
+                {'error': 'Face crop has no image file'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            from django.core.files import File
+            from PIL import Image as PILImage
+            import io
+            
+            # Open the face crop image
+            crop_image_file = face_crop.crop_image_path
+            
+            # Delete old profile picture if exists
+            if student.profile_picture:
+                student.profile_picture.delete(save=False)
+            
+            # Copy the face crop to profile picture
+            # Read the crop image content
+            crop_image_file.open('rb')
+            image_content = crop_image_file.read()
+            crop_image_file.close()
+            
+            # Create a new file from the content
+            import os
+            from django.core.files.uploadedfile import InMemoryUploadedFile
+            
+            # Generate a unique filename
+            ext = os.path.splitext(crop_image_file.name)[1]
+            filename = f"student_{student.id}_from_crop_{face_crop.id}{ext}"
+            
+            # Create file object
+            image_file = InMemoryUploadedFile(
+                io.BytesIO(image_content),
+                None,
+                filename,
+                'image/jpeg',
+                len(image_content),
+                None
+            )
+            
+            # Save to student profile picture
+            student.profile_picture = image_file
+            student.save(update_fields=['profile_picture'])
+            
+            serializer = self.get_serializer(student)
+            return Response({
+                'message': 'Profile picture set from face crop successfully',
+                'student': serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to set profile picture from face crop: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class SessionViewSet(viewsets.ModelViewSet):
@@ -2318,5 +2491,92 @@ class FaceCropViewSet(viewsets.ModelViewSet):
             'student_name': result.get('student_name'),
             'confidence': result.get('confidence'),
             'message': result.get('message'),
+        })
+
+    @action(detail=True, methods=['post'], url_path='create-and-assign-student')
+    def create_and_assign_student(self, request, pk=None):
+        """
+        Create a new student with a default name and assign this face crop to them.
+        
+        Body params:
+        - class_id (int, required): The class to create the student in
+        - confidence (float, optional): confidence score to store
+        """
+        face_crop = self.get_object()
+        class_id = request.data.get('class_id')
+        confidence = request.data.get('confidence')
+        
+        if not class_id:
+            return Response({'error': 'class_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            class_id_int = int(class_id)
+        except (TypeError, ValueError):
+            return Response({'error': 'class_id must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            confidence_val = float(confidence) if confidence is not None else None
+        except (TypeError, ValueError):
+            confidence_val = None
+        
+        # Check that the user has permission to add students to this class
+        try:
+            class_obj = Class.objects.get(id=class_id_int)
+        except Class.DoesNotExist:
+            return Response({'error': 'Class not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Permission check: user must own the class (or be admin)
+        if not request.user.is_staff and class_obj.owner != request.user:
+            return Response(
+                {'error': 'You do not have permission to add students to this class'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Generate a unique default name for the student
+        # Find the next available number
+        existing_students = Student.objects.filter(class_enrolled=class_obj)
+        counter = 1
+        while True:
+            first_name = f"Student"
+            last_name = f"#{counter}"
+            # Check if this name already exists
+            if not existing_students.filter(first_name=first_name, last_name=last_name).exists():
+                break
+            counter += 1
+        
+        # Create the student
+        try:
+            student = Student.objects.create(
+                class_enrolled=class_obj,
+                first_name=first_name,
+                last_name=last_name,
+                student_id='',
+                email=''
+            )
+        except Exception as e:
+            return Response({'error': f'Failed to create student: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Assign the face crop to the new student
+        face_crop.identify_student(student, confidence_val)
+        
+        return Response({
+            'status': 'success',
+            'crop_id': face_crop.id,
+            'assigned': True,
+            'student_id': student.id,
+            'student_name': student.full_name,
+            'student': {
+                'id': student.id,
+                'class_enrolled': student.class_enrolled.id,
+                'class_name': student.class_enrolled.name,
+                'first_name': student.first_name,
+                'last_name': student.last_name,
+                'full_name': student.full_name,
+                'student_id': student.student_id,
+                'email': student.email,
+                'created_at': student.created_at.isoformat(),
+            },
+            'confidence': confidence_val,
+            'message': f'Created new student "{student.full_name}" and assigned face crop',
         })
 
