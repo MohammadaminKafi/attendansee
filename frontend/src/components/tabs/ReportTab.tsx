@@ -83,18 +83,24 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
 
     setShowExportMenu(false);
 
+    const totalSessions = report.sessions.length;
+
     // Prepare CSV header
-    const headers = ['Student Name', 'Student ID', 'Email', 'Attendance Rate'];
+    const headers = ['Student Name', 'Student ID', 'Email', `Sessions Present (/${totalSessions})`, 'Attendance Rate'];
     report.sessions.forEach((session) => {
       headers.push(`${session.name} (${new Date(session.date).toLocaleDateString()})`);
     });
 
     // Prepare CSV rows
     const rows = report.attendance_matrix.map((student) => {
+      // Count present sessions
+      const presentCount = student.session_attendance.filter(a => a.present).length;
+      
       const row = [
         student.full_name,
         student.student_number,
         student.email || '',
+        `${presentCount}`,
         `${student.attendance_rate}%`,
       ];
 
