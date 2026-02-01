@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 import csv
 import io
-from .models import Class, Student, Session, Image, FaceCrop
+from .models import Class, Student, Session, Image, FaceCrop, ManualAttendance
 
 
 User = get_user_model()
@@ -791,3 +791,56 @@ class ClusterCropsSerializer(serializers.Serializer):
     )
 
 
+class ManualAttendanceSerializer(serializers.ModelSerializer):
+    """
+    Serializer for ManualAttendance model.
+    Allows marking students as present/absent manually.
+    """
+    student_name = serializers.ReadOnlyField(source='student.full_name')
+    session_name = serializers.ReadOnlyField(source='session.name')
+    marked_by_username = serializers.ReadOnlyField(source='marked_by.username')
+    
+    class Meta:
+        model = ManualAttendance
+        fields = [
+            'id', 'student', 'student_name', 'session', 'session_name',
+            'is_present', 'marked_by', 'marked_by_username', 'marked_at',
+            'note', 'created_at'
+        ]
+        read_only_fields = ['id', 'marked_by', 'marked_at', 'created_at']
+    
+    def validate(self, data):
+        """
+        Ensure student belongs to the session's class.
+        """
+        student = data.get('student')
+        session = data.get('session')
+        
+        if student and session:
+            if student.class_enrolled != session.class_session:
+                raise serializers.ValidationError(
+                    "Student must belong to the same class as the session."
+                )
+        
+        return data
+    
+    def create(self, validated_data):
+        """
+        Create or update manual attendance record.
+        Only one record per student per session.
+        """
+        student = validated_data['student']
+        session = validated_data['session']
+        
+        # Get or create the manual attendance record
+        manual_attendance, created = ManualAttendance.objects.update_or_create(
+            student=student,
+            session=session,
+            defaults={
+                'is_present': validated_data.get('is_present', True),
+                'marked_by': validated_data.get('marked_by'),
+                'note': validated_data.get('note', ''),
+            }
+        )
+        
+        return manual_attendance

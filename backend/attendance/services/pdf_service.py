@@ -296,16 +296,25 @@ class AttendancePDFService(BasePDFService):
         Returns:
             List of reportlab elements for this student
         """
-        from ..models import Session, FaceCrop
+        from ..models import Session, FaceCrop, ManualAttendance
         
         elements = []
         
-        # Get sessions where student was present
-        attended_sessions = Session.objects.filter(
+        # Get sessions where student was present (face detection)
+        face_crop_sessions = Session.objects.filter(
             images__face_crops__student=student
-        ).distinct().order_by('date', 'created_at')
+        ).distinct()
         
-        attended_count = attended_sessions.count()
+        # Get sessions where student was manually marked as present
+        manual_present_sessions = Session.objects.filter(
+            manual_attendance_records__student=student,
+            manual_attendance_records__is_present=True
+        ).distinct()
+        
+        # Combine both sets (union) - sessions with either face detection or manual present
+        all_attended_sessions = (face_crop_sessions | manual_present_sessions).order_by('date', 'created_at').distinct()
+        
+        attended_count = all_attended_sessions.count()
         attendance_rate = (attended_count / total_sessions * 100) if total_sessions > 0 else 0
         
         # Student header with profile picture and attendance stats
@@ -358,8 +367,8 @@ class AttendancePDFService(BasePDFService):
             elements.append(Spacer(1, 0.2*inch))
             return elements
         
-        # Create image grid for face crops
-        image_table = self._create_face_crop_table(student, attended_sessions)
+        # Create image grid for face crops (pass student for manual attendance lookup)
+        image_table = self._create_face_crop_table(student, all_attended_sessions)
         if image_table:
             elements.append(image_table)
         
@@ -368,6 +377,7 @@ class AttendancePDFService(BasePDFService):
     def _create_face_crop_table(self, student, attended_sessions):
         """
         Create a table containing face crop images with session info.
+        Includes manual attendance indicators.
         
         Args:
             student: Student model instance
@@ -376,7 +386,7 @@ class AttendancePDFService(BasePDFService):
         Returns:
             Table or None: ReportLab Table object or None if no images
         """
-        from ..models import FaceCrop
+        from ..models import FaceCrop, ManualAttendance
         
         image_data = []
         current_row = []
@@ -384,16 +394,22 @@ class AttendancePDFService(BasePDFService):
         image_size = 0.9 * inch  # Further reduced from 1.1 to 0.9 inch for tighter spacing
         
         for session in attended_sessions:
+            # Check if this is a manual attendance record
+            manual_record = ManualAttendance.objects.filter(
+                session=session,
+                student=student
+            ).first()
+            
             # Get one face crop for this student in this session
             face_crop = FaceCrop.objects.filter(
                 image__session=session,
                 student=student
             ).first()
             
+            cell_elements = []
+            
             if face_crop and face_crop.crop_image_path:
-                cell_elements = []
-                
-                # Try to load and add the face crop image
+                # Has face crop - show the image
                 img = self._load_image(
                     face_crop.crop_image_path.path,
                     width=image_size,
@@ -408,17 +424,32 @@ class AttendancePDFService(BasePDFService):
                         "[Image Not Available]",
                         self.session_info_style
                     ))
-                
-                # Add session info below image
-                session_info = self._create_session_info(session)
-                cell_elements.append(session_info)
-                
-                current_row.append(cell_elements)
-                
-                # Add row to table when it reaches max images per row
-                if len(current_row) == max_images_per_row:
-                    image_data.append(current_row)
-                    current_row = []
+            elif manual_record and manual_record.is_present:
+                # Manual attendance with no face crop - show hand icon
+                cell_elements.append(Paragraph(
+                    '<font size=32 color="#FF6B35">✋</font>',
+                    ParagraphStyle(
+                        'ManualIcon',
+                        parent=self.session_info_style,
+                        alignment=TA_CENTER,
+                        spaceBefore=10,
+                        spaceAfter=10
+                    )
+                ))
+            else:
+                # Should not happen, but handle gracefully
+                continue
+            
+            # Add session info below image/icon
+            session_info = self._create_session_info(session, manual_record)
+            cell_elements.append(session_info)
+            
+            current_row.append(cell_elements)
+            
+            # Add row to table when it reaches max images per row
+            if len(current_row) == max_images_per_row:
+                image_data.append(current_row)
+                current_row = []
         
         # Add remaining images if any
         if current_row:
@@ -448,12 +479,13 @@ class AttendancePDFService(BasePDFService):
         
         return table
     
-    def _create_session_info(self, session):
+    def _create_session_info(self, session, manual_record=None):
         """
         Create a formatted paragraph with session information.
         
         Args:
             session: Session model instance
+            manual_record: ManualAttendance instance if manually marked (optional)
             
         Returns:
             Paragraph: ReportLab Paragraph with session details
@@ -463,6 +495,10 @@ class AttendancePDFService(BasePDFService):
         
         if session.start_time:
             session_info_text += f"<br/>{session.start_time.strftime('%H:%M')}"
+        
+        # Add manual indicator if this is a manual attendance
+        if manual_record:
+            session_info_text += '<br/><font color="#FF6B35"><b>[Manual]</b></font>'
         
         return Paragraph(session_info_text, self.session_info_style)
     

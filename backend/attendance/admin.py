@@ -3,7 +3,7 @@ from django.utils.html import format_html
 from django.db.models import Count, Q, Avg
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from .models import Class, Student, Session, Image, FaceCrop
+from .models import Class, Student, Session, Image, FaceCrop, ManualAttendance
 
 
 # ============================================================================
@@ -889,4 +889,99 @@ class FaceCropAdmin(admin.ModelAdmin):
             'student__class_enrolled'
         )
         return qs
+
+
+@admin.register(ManualAttendance)
+class ManualAttendanceAdmin(admin.ModelAdmin):
+    """Admin interface for ManualAttendance model."""
+    list_display = (
+        'id',
+        'student_link',
+        'session_link',
+        'is_present_badge',
+        'marked_by_link',
+        'marked_at',
+        'created_at'
+    )
+    list_filter = (
+        'is_present',
+        'marked_at',
+        'created_at',
+        ('marked_by', admin.RelatedOnlyFieldListFilter),
+    )
+    search_fields = (
+        'student__first_name',
+        'student__last_name',
+        'student__student_id',
+        'session__name',
+        'marked_by__username',
+        'note'
+    )
+    readonly_fields = ('created_at', 'marked_at')
+    autocomplete_fields = ['student', 'session', 'marked_by']
+    date_hierarchy = 'marked_at'
+    
+    fieldsets = (
+        ('Attendance Information', {
+            'fields': ('student', 'session', 'is_present', 'note')
+        }),
+        ('Tracking Information', {
+            'fields': ('marked_by', 'marked_at', 'created_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def student_link(self, obj):
+        """Link to student detail page."""
+        if obj.student:
+            url = reverse('admin:attendance_student_change', args=[obj.student.id])
+            return format_html('<a href="{}">{}</a>', url, obj.student.full_name)
+        return '-'
+    student_link.short_description = 'Student'
+    student_link.admin_order_field = 'student__last_name'
+    
+    def session_link(self, obj):
+        """Link to session detail page."""
+        if obj.session:
+            url = reverse('admin:attendance_session_change', args=[obj.session.id])
+            return format_html('<a href="{}">{}</a>', url, obj.session.name)
+        return '-'
+    session_link.short_description = 'Session'
+    session_link.admin_order_field = 'session__date'
+    
+    def is_present_badge(self, obj):
+        """Display present/absent as badge."""
+        if obj.is_present:
+            return format_html(
+                '<span style="background-color: #28a745; color: white; padding: 3px 10px; '
+                'border-radius: 3px; font-weight: bold;">Present</span>'
+            )
+        else:
+            return format_html(
+                '<span style="background-color: #dc3545; color: white; padding: 3px 10px; '
+                'border-radius: 3px; font-weight: bold;">Absent</span>'
+            )
+    is_present_badge.short_description = 'Status'
+    is_present_badge.admin_order_field = 'is_present'
+    
+    def marked_by_link(self, obj):
+        """Link to user who marked the attendance."""
+        if obj.marked_by:
+            return format_html('<a href="#">{}</a>', obj.marked_by.username)
+        return '-'
+    marked_by_link.short_description = 'Marked By'
+    marked_by_link.admin_order_field = 'marked_by__username'
+    
+    def get_queryset(self, request):
+        """Optimize queryset with select_related."""
+        qs = super().get_queryset(request)
+        qs = qs.select_related(
+            'student',
+            'student__class_enrolled',
+            'session',
+            'session__class_session',
+            'marked_by'
+        )
+        return qs
+
 

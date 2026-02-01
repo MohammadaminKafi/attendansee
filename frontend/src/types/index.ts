@@ -370,6 +370,7 @@ export interface StudentSessionDetail {
   start_time: string | null;
   end_time: string | null;
   was_present: boolean;
+  is_manual: boolean;
   detection_count: number;
   face_crops: Array<{
     id: number;
@@ -397,6 +398,7 @@ export interface SessionAttendance {
   session_id: number;
   present: boolean;
   detection_count: number;
+  is_manual: boolean;
 }
 
 export interface StudentAttendanceRecord {
@@ -435,6 +437,39 @@ export interface AttendanceReport {
   };
   sessions: SessionSummary[];
   attendance_matrix: StudentAttendanceRecord[];
+}
+
+// Manual Attendance types
+export interface ManualAttendance {
+  id: number;
+  student: number;
+  student_name: string;
+  session: number;
+  session_name: string;
+  is_present: boolean;
+  marked_by: number | null;
+  marked_by_username: string | null;
+  marked_at: string;
+  note: string;
+  created_at: string;
+}
+
+export interface MarkAttendanceData {
+  student_id: number;
+  is_present?: boolean;
+  note?: string;
+}
+
+export interface MarkStudentSessionAttendanceData {
+  session_id: number;
+  is_present?: boolean;
+  note?: string;
+}
+
+export interface ManualAttendanceResponse {
+  status: 'created' | 'updated';
+  manual_attendance: ManualAttendance;
+  message: string;
 }
 
 // API Response types

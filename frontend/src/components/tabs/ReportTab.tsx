@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { classesAPI } from '@/services/api';
+import { classesAPI, sessionsAPI } from '@/services/api';
 import { AttendanceReport } from '@/types';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Badge } from '@/components/ui/Badge';
-import { CheckCircle, XCircle, Download, FileText, ChevronDown } from 'lucide-react';
+import { CheckCircle, XCircle, Download, FileText, ChevronDown, Hand, RotateCcw } from 'lucide-react';
 
 interface ReportTabProps {
   classId: number;
@@ -15,6 +15,8 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
   const [error, setError] = useState<string | null>(null);
   const [exportingPDF, setExportingPDF] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [hoveredCell, setHoveredCell] = useState<{ studentId: number; sessionId: number } | null>(null);
+  const [togglingCell, setTogglingCell] = useState<{ studentId: number; sessionId: number } | null>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -46,6 +48,33 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
       setError(err.response?.data?.detail || 'Failed to load attendance report');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleMarkAttendance = async (sessionId: number, studentId: number, isPresent: boolean) => {
+    try {
+      setTogglingCell({ studentId, sessionId });
+      await sessionsAPI.markAttendance(sessionId, {
+        student_id: studentId,
+        is_present: isPresent,
+      });
+      await loadReport();
+    } catch (err) {
+      console.error('Error marking attendance:', err);
+    } finally {
+      setTogglingCell(null);
+    }
+  };
+
+  const handleUnmarkAttendance = async (sessionId: number, studentId: number) => {
+    try {
+      setTogglingCell({ studentId, sessionId });
+      await sessionsAPI.unmarkAttendance(sessionId, studentId);
+      await loadReport();
+    } catch (err) {
+      console.error('Error unmarking attendance:', err);
+    } finally {
+      setTogglingCell(null);
     }
   };
 
@@ -268,14 +297,67 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
                     {student.attendance_rate}%
                   </Badge>
                 </td>
-                {student.session_attendance.map((attendance, sessionIndex) => (
+                {student.session_attendance.map((attendance, sessionIndex) => {
+                  const sessionId = report.sessions[sessionIndex].id;
+                  const isHovered = hoveredCell?.studentId === student.student_id && hoveredCell?.sessionId === sessionId;
+                  const isToggling = togglingCell?.studentId === student.student_id && togglingCell?.sessionId === sessionId;
+                  
+                  return (
                   <td
                     key={sessionIndex}
-                    className="px-3 py-3 text-center border-r border-dark-border"
+                    className="px-3 py-3 text-center border-r border-dark-border relative"
+                    onMouseEnter={() => setHoveredCell({ studentId: student.student_id, sessionId })}
+                    onMouseLeave={() => setHoveredCell(null)}
                   >
+                    {isHovered && !isToggling ? (
+                      <div className="flex items-center justify-center gap-1 border border-dark-border rounded-lg p-1 bg-dark-card">
+                        <button
+                          onClick={() => handleMarkAttendance(sessionId, student.student_id, true)}
+                          className={`p-1 rounded transition-colors ${
+                            attendance.is_manual && attendance.present
+                              ? 'bg-success text-white'
+                              : 'hover:bg-dark-hover text-gray-400'
+                          }`}
+                          title="Mark as Present"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleMarkAttendance(sessionId, student.student_id, false)}
+                          className={`p-1 rounded transition-colors ${
+                            attendance.is_manual && !attendance.present
+                              ? 'bg-danger text-white'
+                              : 'hover:bg-dark-hover text-gray-400'
+                          }`}
+                          title="Mark as Absent"
+                        >
+                          <XCircle className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleUnmarkAttendance(sessionId, student.student_id)}
+                          disabled={!attendance.is_manual}
+                          className={`p-1 rounded transition-colors disabled:opacity-50 ${
+                            !attendance.is_manual
+                              ? 'bg-primary text-white'
+                              : 'hover:bg-dark-hover text-gray-400'
+                          }`}
+                          title="Auto (based on face detection)"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                    <>
                     {attendance.present ? (
                       <div className="flex flex-col items-center gap-1">
-                        <CheckCircle className="w-5 h-5 text-success" />
+                        <div className="flex items-center justify-center gap-1">
+                          <CheckCircle className="w-5 h-5 text-success" />
+                          {attendance.is_manual && (
+                            <div title="Manually marked">
+                              <Hand className="w-3 h-3 text-warning" />
+                            </div>
+                          )}
+                        </div>
                         {attendance.detection_count > 1 && (
                           <span className="text-xs text-gray-500">
                             {attendance.detection_count}×
@@ -283,10 +365,20 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
                         )}
                       </div>
                     ) : (
-                      <XCircle className="w-5 h-5 text-gray-600 mx-auto" />
+                      <div className="flex items-center justify-center gap-1">
+                        <XCircle className="w-5 h-5 text-gray-600 mx-auto" />
+                        {attendance.is_manual && (
+                          <div title="Manually marked">
+                            <Hand className="w-3 h-3 text-warning" />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    </>
                     )}
                   </td>
-                ))}
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -336,6 +428,10 @@ export const ReportTab: React.FC<ReportTabProps> = ({ classId }) => {
         <div className="flex items-center gap-2">
           <XCircle className="w-4 h-4 text-gray-600" />
           <span>Absent</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Hand className="w-4 h-4 text-warning" />
+          <span>Manually marked</span>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="success">80%+</Badge>
