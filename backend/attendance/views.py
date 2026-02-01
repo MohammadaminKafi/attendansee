@@ -316,7 +316,7 @@ class ClassViewSet(viewsets.ModelViewSet):
         attendance_matrix = []
         
         for student in students:
-            # Get sessions this student attended
+            # Get sessions this student attended (via face detection)
             attended_session_ids = set(
                 Session.objects.filter(
                     id__in=sessions.values_list('id', flat=True),
@@ -324,24 +324,51 @@ class ClassViewSet(viewsets.ModelViewSet):
                 ).distinct().values_list('id', flat=True)
             )
             
+            # Get manual attendance records for this student
+            from .models import ManualAttendance
+            manual_attendance_dict = {}
+            manual_records = ManualAttendance.objects.filter(
+                student=student,
+                session__in=sessions
+            )
+            for record in manual_records:
+                manual_attendance_dict[record.session_id] = record.is_present
+            
             # Build attendance record for each session
             session_attendance = []
+            actual_attended = 0
             for session in sessions:
                 detection_count = FaceCrop.objects.filter(
                     image__session=session,
                     student=student
                 ).count()
                 
+                # Check if student is present (via face detection OR manual marking)
+                is_present_via_detection = session.id in attended_session_ids
+                manual_attendance_status = manual_attendance_dict.get(session.id)
+                
+                # Determine final presence status
+                # Manual attendance overrides automatic detection
+                if manual_attendance_status is not None:
+                    is_present = manual_attendance_status
+                    is_manual = True
+                else:
+                    is_present = is_present_via_detection
+                    is_manual = False
+                
+                if is_present:
+                    actual_attended += 1
+                
                 session_attendance.append({
                     'session_id': session.id,
-                    'present': session.id in attended_session_ids,
-                    'detection_count': detection_count
+                    'present': is_present,
+                    'detection_count': detection_count,
+                    'is_manual': is_manual
                 })
             
             # Calculate student statistics
-            attended_count = len(attended_session_ids)
             total_sessions = sessions.count()
-            attendance_rate = (attended_count / total_sessions * 100) if total_sessions > 0 else 0
+            attendance_rate = (actual_attended / total_sessions * 100) if total_sessions > 0 else 0
             
             attendance_matrix.append({
                 'student_id': student.id,
@@ -350,7 +377,7 @@ class ClassViewSet(viewsets.ModelViewSet):
                 'full_name': student.full_name,
                 'student_number': student.student_id,
                 'email': student.email,
-                'attended_sessions': attended_count,
+                'attended_sessions': actual_attended,
                 'total_sessions': total_sessions,
                 'attendance_rate': round(attendance_rate, 2),
                 'session_attendance': session_attendance
@@ -359,10 +386,36 @@ class ClassViewSet(viewsets.ModelViewSet):
         # Build session summary
         session_summary = []
         for session in sessions:
-            present_count = Student.objects.filter(
+            # Count students present via face detection
+            present_via_detection = Student.objects.filter(
                 class_enrolled=class_obj,
                 face_crops__image__session=session
             ).distinct().count()
+            
+            # Count students with manual attendance (present)
+            from .models import ManualAttendance
+            manual_present = ManualAttendance.objects.filter(
+                session=session,
+                is_present=True
+            ).values_list('student_id', flat=True)
+            
+            # Get students present via detection
+            detected_student_ids = set(Student.objects.filter(
+                class_enrolled=class_obj,
+                face_crops__image__session=session
+            ).distinct().values_list('id', flat=True))
+            
+            # Combine: students detected OR manually marked present
+            all_present_ids = detected_student_ids.union(set(manual_present))
+            
+            # Remove students manually marked absent (even if detected)
+            manual_absent = ManualAttendance.objects.filter(
+                session=session,
+                is_present=False
+            ).values_list('student_id', flat=True)
+            all_present_ids = all_present_ids.difference(set(manual_absent))
+            
+            present_count = len(all_present_ids)
             
             session_summary.append({
                 'id': session.id,
@@ -1047,15 +1100,24 @@ class StudentViewSet(viewsets.ModelViewSet):
             class_session=student.class_enrolled
         ).order_by('-date', '-created_at')
         
-        # Get sessions where student was present
+        # Get sessions where student was present (via face detection)
         attended_session_ids = set(
             Session.objects.filter(
                 images__face_crops__student=student
             ).distinct().values_list('id', flat=True)
         )
         
+        # Get manual attendance records for this student
+        from .models import ManualAttendance
+        manual_attendance_dict = {}
+        manual_records = ManualAttendance.objects.filter(student=student)
+        for record in manual_records:
+            manual_attendance_dict[record.session_id] = record.is_present
+        
         # Build session attendance details
         session_details = []
+        actual_attended = 0
+        
         for session in all_sessions:
             # Get face crops for this student in this session
             face_crops = FaceCrop.objects.filter(
@@ -1078,28 +1140,43 @@ class StudentViewSet(viewsets.ModelViewSet):
                     'created_at': crop.created_at
                 })
             
+            # Determine presence status
+            is_present_via_detection = session.id in attended_session_ids
+            manual_attendance_status = manual_attendance_dict.get(session.id)
+            
+            # Manual attendance overrides automatic detection
+            if manual_attendance_status is not None:
+                was_present = manual_attendance_status
+                is_manual = True
+            else:
+                was_present = is_present_via_detection
+                is_manual = False
+            
+            if was_present:
+                actual_attended += 1
+            
             session_details.append({
                 'session_id': session.id,
                 'session_name': session.name,
                 'date': session.date,
                 'start_time': session.start_time,
                 'end_time': session.end_time,
-                'was_present': session.id in attended_session_ids,
+                'was_present': was_present,
+                'is_manual': is_manual,
                 'detection_count': len(crops_data),
                 'face_crops': crops_data
             })
         
         # Calculate statistics
         total_sessions = all_sessions.count()
-        attended_count = len(attended_session_ids)
-        attendance_rate = (attended_count / total_sessions * 100) if total_sessions > 0 else 0
+        attendance_rate = (actual_attended / total_sessions * 100) if total_sessions > 0 else 0
         
         return Response({
             'student': StudentSerializer(student, context={'request': request}).data,
             'statistics': {
                 'total_sessions': total_sessions,
-                'attended_sessions': attended_count,
-                'missed_sessions': total_sessions - attended_count,
+                'attended_sessions': actual_attended,
+                'missed_sessions': total_sessions - actual_attended,
                 'attendance_rate': round(attendance_rate, 2),
                 'total_detections': student.face_crops.count()
             },
@@ -1362,6 +1439,95 @@ class StudentViewSet(viewsets.ModelViewSet):
                 {'error': f'Failed to set profile picture from face crop: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    @action(detail=True, methods=['post'], url_path='mark-session-attendance')
+    def mark_session_attendance(self, request, pk=None):
+        """
+        Mark attendance for this student in a specific session manually.
+        
+        Body params:
+        - session_id: ID of the session (required)
+        - is_present: True for present, False for absent (default: True)
+        - note: Optional note about the manual marking
+        
+        Returns:
+        - Manual attendance record created/updated
+        """
+        from .models import ManualAttendance
+        from .serializers import ManualAttendanceSerializer
+        
+        student = self.get_object()
+        
+        # Validate session_id
+        session_id = request.data.get('session_id')
+        if not session_id:
+            return Response(
+                {'error': 'session_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify session exists and belongs to the student's class
+        try:
+            session = Session.objects.get(id=session_id)
+        except Session.DoesNotExist:
+            return Response(
+                {'error': 'Session not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if session.class_session != student.class_enrolled:
+            return Response(
+                {'error': 'Session does not belong to this student\'s class'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get or create manual attendance record
+        is_present = request.data.get('is_present', True)
+        note = request.data.get('note', '')
+        
+        manual_attendance, created = ManualAttendance.objects.update_or_create(
+            student=student,
+            session=session,
+            defaults={
+                'is_present': is_present,
+                'marked_by': request.user,
+                'note': note
+            }
+        )
+        
+        serializer = ManualAttendanceSerializer(manual_attendance)
+        
+        return Response({
+            'status': 'created' if created else 'updated',
+            'manual_attendance': serializer.data,
+            'message': f'Student marked as {"present" if is_present else "absent"} for session {session.name}'
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['get'], url_path='manual-attendance')
+    def manual_attendance_list(self, request, pk=None):
+        """
+        Get all manual attendance records for this student.
+        
+        Returns:
+        - List of manual attendance records across all sessions
+        """
+        from .models import ManualAttendance
+        from .serializers import ManualAttendanceSerializer
+        
+        student = self.get_object()
+        
+        manual_records = ManualAttendance.objects.filter(
+            student=student
+        ).select_related('session', 'marked_by').order_by('-session__date', '-marked_at')
+        
+        serializer = ManualAttendanceSerializer(manual_records, many=True)
+        
+        return Response({
+            'student_id': student.id,
+            'student_name': student.full_name,
+            'total_records': manual_records.count(),
+            'manual_attendance': serializer.data
+        })
 
 
 class SessionViewSet(viewsets.ModelViewSet):
@@ -1993,6 +2159,142 @@ class SessionViewSet(viewsets.ModelViewSet):
                 'include_unidentified': include_unidentified
             },
             'suggestions': suggestions_data
+        })
+    
+    @action(detail=True, methods=['post'], url_path='mark-attendance')
+    def mark_attendance(self, request, pk=None):
+        """
+        Mark attendance for a student in this session manually.
+        
+        This endpoint allows marking a student as present or absent manually,
+        independent of face detection. Useful for cases where:
+        - Student was present but not detected by the system
+        - Need to override automatic detection
+        - Manual record keeping
+        
+        Body params:
+        - student_id: ID of the student (required)
+        - is_present: True for present, False for absent (default: True)
+        - note: Optional note about the manual marking
+        
+        Returns:
+        - Manual attendance record created/updated
+        """
+        from .models import ManualAttendance
+        from .serializers import ManualAttendanceSerializer
+        
+        session_obj = self.get_object()
+        
+        # Validate student_id
+        student_id = request.data.get('student_id')
+        if not student_id:
+            return Response(
+                {'error': 'student_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify student exists and belongs to the session's class
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response(
+                {'error': 'Student not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if student.class_enrolled != session_obj.class_session:
+            return Response(
+                {'error': 'Student does not belong to this session\'s class'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get or create manual attendance record
+        is_present = request.data.get('is_present', True)
+        note = request.data.get('note', '')
+        
+        manual_attendance, created = ManualAttendance.objects.update_or_create(
+            student=student,
+            session=session_obj,
+            defaults={
+                'is_present': is_present,
+                'marked_by': request.user,
+                'note': note
+            }
+        )
+        
+        serializer = ManualAttendanceSerializer(manual_attendance)
+        
+        return Response({
+            'status': 'created' if created else 'updated',
+            'manual_attendance': serializer.data,
+            'message': f'Student marked as {"present" if is_present else "absent"}'
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['delete'], url_path='unmark-attendance')
+    def unmark_attendance(self, request, pk=None):
+        """
+        Remove manual attendance marking for a student in this session.
+        
+        Query params:
+        - student_id: ID of the student (required)
+        
+        Returns:
+        - Success message
+        """
+        from .models import ManualAttendance
+        
+        session_obj = self.get_object()
+        
+        # Validate student_id
+        student_id = request.query_params.get('student_id')
+        if not student_id:
+            return Response(
+                {'error': 'student_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Try to find and delete the manual attendance record
+        try:
+            manual_attendance = ManualAttendance.objects.get(
+                student_id=student_id,
+                session=session_obj
+            )
+            manual_attendance.delete()
+            
+            return Response({
+                'status': 'deleted',
+                'message': 'Manual attendance marking removed'
+            }, status=status.HTTP_200_OK)
+        except ManualAttendance.DoesNotExist:
+            return Response(
+                {'error': 'No manual attendance record found for this student in this session'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=True, methods=['get'], url_path='manual-attendance')
+    def manual_attendance_list(self, request, pk=None):
+        """
+        Get all manual attendance records for this session.
+        
+        Returns:
+        - List of manual attendance records
+        """
+        from .models import ManualAttendance
+        from .serializers import ManualAttendanceSerializer
+        
+        session_obj = self.get_object()
+        
+        manual_records = ManualAttendance.objects.filter(
+            session=session_obj
+        ).select_related('student', 'marked_by').order_by('student__last_name', 'student__first_name')
+        
+        serializer = ManualAttendanceSerializer(manual_records, many=True)
+        
+        return Response({
+            'session_id': session_obj.id,
+            'session_name': session_obj.name,
+            'total_records': manual_records.count(),
+            'manual_attendance': serializer.data
         })
 
 

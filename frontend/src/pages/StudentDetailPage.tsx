@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { ArrowLeft, CheckCircle, XCircle, User, Calendar, TrendingUp, Image as ImageIcon, Upload, Trash2, Check } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, User, Calendar, TrendingUp, Image as ImageIcon, Upload, Trash2, Check, Hand, RotateCcw } from 'lucide-react';
 
 const StudentDetailPage: React.FC = () => {
   const { classId, studentId } = useParams<{ classId: string; studentId: string }>();
@@ -21,6 +21,7 @@ const StudentDetailPage: React.FC = () => {
   const [uploadingPicture, setUploadingPicture] = useState(false);
   const [settingFromCrop, setSettingFromCrop] = useState(false);
   const [hoveredCropId, setHoveredCropId] = useState<number | null>(null);
+  const [togglingAttendance, setTogglingAttendance] = useState<number | null>(null);
 
   useEffect(() => {
     loadData();
@@ -155,7 +156,42 @@ const StudentDetailPage: React.FC = () => {
       setSettingFromCrop(false);
     }
   };
+const handleToggleManualAttendance = async (sessionId: number, currentIsManual: boolean, currentWasPresent: boolean) => {
+    if (!studentId) return;
+    
+    try {
+      setTogglingAttendance(sessionId);
+      setError(null);
+      
+      // Cycle through 3 states: Auto -> Present -> Absent -> Auto
+      if (!currentIsManual) {
+        // Currently Auto -> Mark as Present
+        await studentsAPI.markSessionAttendance(parseInt(studentId), {
+          session_id: sessionId,
+          is_present: true,
+        });
+      } else if (currentWasPresent) {
+        // Currently Present -> Mark as Absent
+        await studentsAPI.markSessionAttendance(parseInt(studentId), {
+          session_id: sessionId,
+          is_present: false,
+        });
+      } else {
+        // Currently Absent -> Clear to Auto
+        await studentsAPI.unmarkAttendance(parseInt(studentId), sessionId);
+      }
+      
+      // Refresh sessions to show updated state
+      await loadData();
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to toggle attendance';
+      setError(errorMessage);
+    } finally {
+      setTogglingAttendance(null);
+    }
+  };
 
+  
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -323,11 +359,13 @@ const StudentDetailPage: React.FC = () => {
                       <h3 className="text-lg font-semibold text-white">{session.session_name}</h3>
                       {session.was_present ? (
                         <Badge variant="success">
+                          {session.is_manual && <Hand className="w-3 h-3 mr-1" />}
                           <CheckCircle className="w-3 h-3 mr-1" />
                           Present
                         </Badge>
                       ) : (
                         <Badge variant="danger">
+                          {session.is_manual && <Hand className="w-3 h-3 mr-1" />}
                           <XCircle className="w-3 h-3 mr-1" />
                           Absent
                         </Badge>
@@ -347,13 +385,53 @@ const StudentDetailPage: React.FC = () => {
                       )}
                     </div>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => navigate(`/classes/${classId}/sessions/${session.session_id}`)}
-                  >
-                    View Session
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 border border-dark-border rounded-lg p-1">
+                      <button
+                        onClick={() => handleToggleManualAttendance(session.session_id, session.is_manual, session.was_present)}
+                        disabled={togglingAttendance === session.session_id}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-50 ${
+                          session.is_manual && session.was_present
+                            ? 'bg-success text-white'
+                            : 'hover:bg-dark-hover text-gray-400'
+                        }`}
+                        title="Mark as Present"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleToggleManualAttendance(session.session_id, session.is_manual, session.was_present)}
+                        disabled={togglingAttendance === session.session_id}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-50 ${
+                          session.is_manual && !session.was_present
+                            ? 'bg-danger text-white'
+                            : 'hover:bg-dark-hover text-gray-400'
+                        }`}
+                        title="Mark as Absent"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleToggleManualAttendance(session.session_id, session.is_manual, session.was_present)}
+                        disabled={togglingAttendance === session.session_id}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-50 ${
+                          !session.is_manual
+                            ? 'bg-primary text-white'
+                            : 'hover:bg-dark-hover text-gray-400'
+                        }`}
+                        title="Auto (based on face detection)"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => navigate(`/classes/${classId}/sessions/${session.session_id}`)}
+                    >
+                      View Session
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Face Crops */}

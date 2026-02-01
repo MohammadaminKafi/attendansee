@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { sessionsAPI, imagesAPI, classesAPI, studentsAPI, faceCropsAPI } from '@/services/api';
-import { Session, Image, Class, FaceCropDetail, Student, AutoAssignAllCropsResponse, SuggestAssignmentsResponse } from '@/types';
+import { Session, Image, Class, FaceCropDetail, Student, AutoAssignAllCropsResponse, SuggestAssignmentsResponse, ManualAttendance } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -19,7 +19,7 @@ import {
   AutoAssignResultModal,
   ManualAssignModal,
 } from '@/components/ui';
-import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users, UserCheck, UserCog } from 'lucide-react';
+import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users, UserCheck, UserCog, Hand, RotateCcw } from 'lucide-react';
 
 const SessionDetailPage: React.FC = () => {
   const { classId, sessionId } = useParams<{ classId: string; sessionId: string }>();
@@ -66,6 +66,11 @@ const SessionDetailPage: React.FC = () => {
   const [loadingManualSuggestions, setLoadingManualSuggestions] = useState(false);
   const [similarFacesCount, setSimilarFacesCount] = useState<number>(5);
 
+  // Manual attendance states
+  const [showManualAttendanceModal, setShowManualAttendanceModal] = useState(false);
+  const [manualAttendanceRecords, setManualAttendanceRecords] = useState<ManualAttendance[]>([]);
+  const [loadingManualAttendance, setLoadingManualAttendance] = useState(false);
+
   useEffect(() => {
     loadData();
   }, [classId, sessionId]);
@@ -94,6 +99,15 @@ const SessionDetailPage: React.FC = () => {
       // Show face crops section if there are any crops
       if (faceCropsResponse.face_crops.length > 0) {
         setShowFaceCropsSection(true);
+      }
+
+      // Load manual attendance records
+      try {
+        const manualAttendanceData = await sessionsAPI.getManualAttendance(parseInt(sessionId));
+        setManualAttendanceRecords(manualAttendanceData.manual_attendance);
+      } catch (err) {
+        // Ignore if it fails, manual attendance is optional
+        console.log('Manual attendance not loaded:', err);
       }
     } catch (err) {
       console.error('Error loading data:', err);
@@ -240,6 +254,56 @@ const SessionDetailPage: React.FC = () => {
       setProcessingAll(false);
       setProcessProgress({ current: 0, total: 0 });
     }
+  };
+
+  const loadManualAttendance = async () => {
+    if (!sessionId) return;
+    
+    try {
+      setLoadingManualAttendance(true);
+      const response = await sessionsAPI.getManualAttendance(parseInt(sessionId));
+      setManualAttendanceRecords(response.manual_attendance);
+    } catch (err) {
+      console.error('Error loading manual attendance:', err);
+    } finally {
+      setLoadingManualAttendance(false);
+    }
+  };
+
+  const handleMarkAttendance = async (studentId: number, isPresent: boolean) => {
+    if (!sessionId) return;
+    
+    try {
+      await sessionsAPI.markAttendance(parseInt(sessionId), {
+        student_id: studentId,
+        is_present: isPresent,
+      });
+      
+      // Reload manual attendance records
+      await loadManualAttendance();
+    } catch (err) {
+      console.error('Error marking attendance:', err);
+      setError('Failed to mark attendance');
+    }
+  };
+
+  const handleUnmarkAttendance = async (studentId: number) => {
+    if (!sessionId) return;
+    
+    try {
+      await sessionsAPI.unmarkAttendance(parseInt(sessionId), studentId);
+      
+      // Reload manual attendance records
+      await loadManualAttendance();
+    } catch (err) {
+      console.error('Error unmarking attendance:', err);
+      setError('Failed to unmark attendance');
+    }
+  };
+
+  const openManualAttendanceModal = () => {
+    loadManualAttendance();
+    setShowManualAttendanceModal(true);
   };
 
   const formatDate = (dateString: string) => {
@@ -722,6 +786,13 @@ const SessionDetailPage: React.FC = () => {
                 <Users className="w-4 h-4 mr-2" />
                 Cluster Faces
               </Button>
+              <Button
+                onClick={openManualAttendanceModal}
+                variant="secondary"
+              >
+                <Hand className="w-4 h-4 mr-2" />
+                Manual Attendance
+              </Button>
               <span className="text-sm text-gray-400">
                 {faceCrops.filter(c => !c.embedding_model).length} / {faceCrops.length} need embeddings
               </span>
@@ -937,6 +1008,92 @@ const SessionDetailPage: React.FC = () => {
               className="flex-1"
             >
               Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Manual Attendance Modal */}
+      <Modal
+        isOpen={showManualAttendanceModal}
+        onClose={() => setShowManualAttendanceModal(false)}
+        title="Manual Attendance"
+      >
+        <div className="space-y-4">
+          {loadingManualAttendance ? (
+            <div className="text-center py-8">
+              <p className="text-gray-400">Loading...</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {students.map((student) => {
+                const manualRecord = manualAttendanceRecords.find(r => r.student === student.id);
+                const isMarkedPresent = manualRecord?.is_present;
+                const isMarkedAbsent = manualRecord && !manualRecord.is_present;
+                const isAuto = !manualRecord;
+                
+                return (
+                  <div
+                    key={student.id}
+                    className="flex items-center justify-between p-3 bg-dark-hover rounded-lg hover:bg-dark-border transition-colors"
+                  >
+                    <div>
+                      <p className="text-white font-medium">{student.full_name}</p>
+                      {student.student_id && (
+                        <p className="text-sm text-gray-500">{student.student_id}</p>
+                      )}
+                    </div>
+                    
+                    <div className="flex items-center gap-1 border border-dark-border rounded-lg p-1">
+                      <button
+                        onClick={() => handleMarkAttendance(student.id, true)}
+                        disabled={loadingManualAttendance}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-50 ${
+                          isMarkedPresent
+                            ? 'bg-success text-white'
+                            : 'hover:bg-dark-hover text-gray-400'
+                        }`}
+                        title="Mark as Present"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleMarkAttendance(student.id, false)}
+                        disabled={loadingManualAttendance}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-50 ${
+                          isMarkedAbsent
+                            ? 'bg-danger text-white'
+                            : 'hover:bg-dark-hover text-gray-400'
+                        }`}
+                        title="Mark as Absent"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleUnmarkAttendance(student.id)}
+                        disabled={loadingManualAttendance || isAuto}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-50 ${
+                          isAuto
+                            ? 'bg-primary text-white'
+                            : 'hover:bg-dark-hover text-gray-400'
+                        }`}
+                        title="Auto (based on face detection)"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-dark-border">
+            <Button
+              variant="secondary"
+              onClick={() => setShowManualAttendanceModal(false)}
+            >
+              Done
             </Button>
           </div>
         </div>

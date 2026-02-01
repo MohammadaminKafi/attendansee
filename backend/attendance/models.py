@@ -281,3 +281,58 @@ class FaceCrop(models.Model):
         Formats coordinates into a string for storage.
         """
         return f"{x},{y},{width},{height}"
+
+
+class ManualAttendance(models.Model):
+    """
+    Represents manual attendance marking by a user.
+    Allows marking a student as present/absent in a session without face detection.
+    """
+    student = models.ForeignKey(
+        'Student',
+        on_delete=models.CASCADE,
+        related_name='manual_attendance_records'
+    )
+    session = models.ForeignKey(
+        'Session',
+        on_delete=models.CASCADE,
+        related_name='manual_attendance_records'
+    )
+    is_present = models.BooleanField(
+        default=True,
+        help_text='Whether the student is marked as present or absent'
+    )
+    marked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='manual_attendance_marks'
+    )
+    marked_at = models.DateTimeField(auto_now=True)
+    note = models.TextField(
+        blank=True,
+        default='',
+        help_text='Optional note about the manual attendance marking'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'manual_attendance'
+        verbose_name = 'Manual Attendance'
+        verbose_name_plural = 'Manual Attendance Records'
+        ordering = ['-marked_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['student', 'session'],
+                name='unique_manual_attendance_per_session'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['student', 'session']),
+            models.Index(fields=['session', '-marked_at']),
+            models.Index(fields=['is_present']),
+        ]
+    
+    def __str__(self):
+        status = "Present" if self.is_present else "Absent"
+        return f"{self.student.full_name} - {self.session.name} - {status}"

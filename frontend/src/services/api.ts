@@ -32,6 +32,10 @@ import type {
   AutoAssignAllCropsData,
   AutoAssignAllCropsResponse,
   SuggestAssignmentsResponse,
+  ManualAttendance,
+  MarkAttendanceData,
+  MarkStudentSessionAttendanceData,
+  ManualAttendanceResponse,
 } from '@/types';
 
 // Single source of truth for API base URL: runtime env injected by docker-entrypoint
@@ -356,6 +360,35 @@ export const sessionsAPI = {
     );
     return response.data;
   },
+
+  markAttendance: async (
+    sessionId: number,
+    data: MarkAttendanceData
+  ): Promise<ManualAttendanceResponse> => {
+    const response = await api.post<ManualAttendanceResponse>(
+      `/attendance/sessions/${sessionId}/mark-attendance/`,
+      data
+    );
+    return response.data;
+  },
+
+  unmarkAttendance: async (sessionId: number, studentId: number): Promise<void> => {
+    await api.delete(`/attendance/sessions/${sessionId}/unmark-attendance/`, {
+      params: { student_id: studentId },
+    });
+  },
+
+  getManualAttendance: async (
+    sessionId: number
+  ): Promise<{
+    session_id: number;
+    session_name: string;
+    total_records: number;
+    manual_attendance: ManualAttendance[];
+  }> => {
+    const response = await api.get(`/attendance/sessions/${sessionId}/manual-attendance/`);
+    return response.data;
+  },
 };
 
 // Students API
@@ -395,6 +428,33 @@ export const studentsAPI = {
       `/attendance/students/${sourceStudentId}/merge/`,
       data
     );
+    return response.data;
+  },
+
+  markSessionAttendance: async (
+    studentId: number,
+    data: MarkStudentSessionAttendanceData
+  ): Promise<ManualAttendanceResponse> => {
+    const response = await api.post<ManualAttendanceResponse>(
+      `/attendance/students/${studentId}/mark-session-attendance/`,
+      data
+    );
+    return response.data;
+  },
+
+  unmarkAttendance: async (studentId: number, sessionId: number): Promise<void> => {
+    await sessionsAPI.unmarkAttendance(sessionId, studentId);
+  },
+
+  getManualAttendance: async (
+    studentId: number
+  ): Promise<{
+    student_id: number;
+    student_name: string;
+    total_records: number;
+    manual_attendance: ManualAttendance[];
+  }> => {
+    const response = await api.get(`/attendance/students/${studentId}/manual-attendance/`);
     return response.data;
   },
 
