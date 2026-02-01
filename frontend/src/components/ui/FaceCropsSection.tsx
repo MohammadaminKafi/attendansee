@@ -29,6 +29,7 @@ interface FaceCropsSectionProps {
   title?: string;
   description?: string;
   showImageInfo?: boolean;
+  classId?: number;
 }
 
 export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
@@ -38,6 +39,7 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
   title = 'Face Crops',
   description,
   showImageInfo = false,
+  classId,
 }) => {
   // State
   const navigate = useNavigate();
@@ -138,6 +140,27 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
     } catch (err) {
       console.error('Error assigning student:', err);
       setError('Failed to assign student');
+    }
+  };
+
+  const handleCreateAndAssignNewStudent = async () => {
+    if (!assigningCropId || !classId) return;
+
+    try {
+      const result = await faceCropsAPI.createAndAssignStudent(assigningCropId, classId);
+      
+      if (result.assigned) {
+        setShowAssignModal(false);
+        setAssigningCropId(null);
+        setSelectedStudentId(null);
+        setStudentSearchQuery('');
+        onUpdate();
+      } else {
+        setError('Failed to create and assign new student');
+      }
+    } catch (err: any) {
+      console.error('Error creating and assigning student:', err);
+      setError(err.response?.data?.error || 'Failed to create and assign new student');
     }
   };
 
@@ -500,7 +523,18 @@ export const FaceCropsSection: React.FC<FaceCropsSectionProps> = ({
             </p>
           )}
 
-          <div className="flex gap-3 pt-4">
+          <div className="flex gap-3 pt-4 border-t border-dark-border">
+            {classId && (
+              <Button
+                onClick={handleCreateAndAssignNewStudent}
+                disabled={!assigningCropId}
+                variant="secondary"
+                className="flex-1"
+              >
+                <UserPlus className="w-4 h-4 mr-2" />
+                Create New
+              </Button>
+            )}
             <Button
               variant="secondary"
               onClick={() => {

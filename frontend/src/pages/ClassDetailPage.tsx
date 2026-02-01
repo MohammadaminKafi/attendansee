@@ -49,6 +49,7 @@ export const ClassDetailPage: React.FC = () => {
   const [showManualAssignModal, setShowManualAssignModal] = useState(false);
   const [manualAssignSuggestions, setManualAssignSuggestions] = useState<any[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [similarFacesCount, setSimilarFacesCount] = useState<number>(5);
 
   const tabs: Tab[] = [
     { id: 'sessions', label: 'Sessions', icon: '📅' },
@@ -242,7 +243,7 @@ export const ClassDetailPage: React.FC = () => {
       setError('');
 
       const result = await classesAPI.getSuggestAssignments(parseInt(id), {
-        k: 5,
+        k: similarFacesCount,
         include_unidentified: true,
         limit: 100
       });
@@ -265,6 +266,27 @@ export const ClassDetailPage: React.FC = () => {
   const handleManualAssignUpdate = () => {
     // Reload data after manual assignment
     loadClassData();
+  };
+
+  const handleChangeSimilarFacesCount = async (newCount: number) => {
+    setSimilarFacesCount(newCount);
+    if (showManualAssignModal && id) {
+      try {
+        setLoadingSuggestions(true);
+        const result = await classesAPI.getSuggestAssignments(parseInt(id), {
+          k: newCount,
+          include_unidentified: true,
+          limit: 100
+        });
+        if (result.suggestions && result.suggestions.length > 0) {
+          setManualAssignSuggestions(result.suggestions);
+        }
+      } catch (err: any) {
+        console.error('Error reloading suggestions:', err);
+      } finally {
+        setLoadingSuggestions(false);
+      }
+    }
   };
 
   if (loading) {
@@ -637,12 +659,18 @@ export const ClassDetailPage: React.FC = () => {
       )}
 
       {/* Manual Assignment Modal */}
-      <ManualAssignModal
-        isOpen={showManualAssignModal}
-        onClose={() => setShowManualAssignModal(false)}
-        suggestions={manualAssignSuggestions}
-        onUpdate={handleManualAssignUpdate}
-      />
+      {id && (
+        <ManualAssignModal
+          isOpen={showManualAssignModal}
+          onClose={() => setShowManualAssignModal(false)}
+          suggestions={manualAssignSuggestions}
+          onUpdate={handleManualAssignUpdate}
+          classId={parseInt(id)}
+          similarFacesCount={similarFacesCount}
+          onChangeSimilarFacesCount={handleChangeSimilarFacesCount}
+          isLoading={loadingSuggestions}
+        />
+      )}
     </div>
   );
 };

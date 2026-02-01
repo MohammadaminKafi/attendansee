@@ -54,6 +54,7 @@ export interface Student {
   full_name: string;
   student_id: string;
   email: string;
+  profile_picture: string | null;
   created_at: string;
 }
 

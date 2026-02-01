@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { studentsAPI, classesAPI } from '@/services/api';
 import { StudentDetailReport, Class } from '@/types';
@@ -7,16 +7,20 @@ import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { ArrowLeft, CheckCircle, XCircle, User, Calendar, TrendingUp, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, User, Calendar, TrendingUp, Image as ImageIcon, Upload, Trash2, Check } from 'lucide-react';
 
 const StudentDetailPage: React.FC = () => {
   const { classId, studentId } = useParams<{ classId: string; studentId: string }>();
   const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [report, setReport] = useState<StudentDetailReport | null>(null);
   const [classData, setClassData] = useState<Class | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [uploadingPicture, setUploadingPicture] = useState(false);
+  const [settingFromCrop, setSettingFromCrop] = useState(false);
+  const [hoveredCropId, setHoveredCropId] = useState<number | null>(null);
 
   useEffect(() => {
     loadData();
@@ -64,6 +68,92 @@ const StudentDetailPage: React.FC = () => {
   const formatTime = (timeString: string | null) => {
     if (!timeString) return 'N/A';
     return timeString;
+  };
+
+  const handleProfilePictureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !studentId) return;
+
+    // Validate file size (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      setError('File size too large. Maximum size is 5MB.');
+      return;
+    }
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      setError('Invalid file type. Please upload an image file.');
+      return;
+    }
+
+    try {
+      setUploadingPicture(true);
+      setError(null);
+      const response = await studentsAPI.uploadProfilePicture(parseInt(studentId), file);
+      
+      // Update the student data in the report
+      if (report) {
+        setReport({
+          ...report,
+          student: response.student,
+        });
+      }
+    } catch (err: any) {
+      console.error('Error uploading profile picture:', err);
+      setError(err.response?.data?.error || 'Failed to upload profile picture');
+    } finally {
+      setUploadingPicture(false);
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleDeleteProfilePicture = async () => {
+    if (!studentId || !report?.student.profile_picture) return;
+
+    try {
+      setUploadingPicture(true);
+      setError(null);
+      const response = await studentsAPI.deleteProfilePicture(parseInt(studentId));
+      
+      // Update the student data in the report
+      if (report) {
+        setReport({
+          ...report,
+          student: response.student,
+        });
+      }
+    } catch (err: any) {
+      console.error('Error deleting profile picture:', err);
+      setError(err.response?.data?.error || 'Failed to delete profile picture');
+    } finally {
+      setUploadingPicture(false);
+    }
+  };
+
+  const handleSetProfileFromCrop = async (faceCropId: number) => {
+    if (!studentId) return;
+
+    try {
+      setSettingFromCrop(true);
+      setError(null);
+      const response = await studentsAPI.setProfilePictureFromCrop(parseInt(studentId), faceCropId);
+      
+      // Update the student data in the report
+      if (report) {
+        setReport({
+          ...report,
+          student: response.student,
+        });
+      }
+    } catch (err: any) {
+      console.error('Error setting profile from crop:', err);
+      setError(err.response?.data?.error || 'Failed to set profile picture from face crop');
+    } finally {
+      setSettingFromCrop(false);
+    }
   };
 
   if (loading) {
@@ -116,9 +206,50 @@ const StudentDetailPage: React.FC = () => {
       <Card className="mb-6">
         <div className="flex items-start justify-between mb-6">
           <div className="flex items-start gap-4">
-            <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center">
-              <User className="w-8 h-8 text-primary" />
+            {/* Profile Picture */}
+            <div className="relative group">
+              <div className="w-20 h-20 rounded-full overflow-hidden bg-dark-hover flex items-center justify-center border-2 border-dark-border">
+                {student.profile_picture ? (
+                  <img
+                    src={student.profile_picture}
+                    alt={student.full_name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <User className="w-10 h-10 text-gray-400" />
+                )}
+              </div>
+              
+              {/* Upload/Delete buttons overlay */}
+              <div className="absolute inset-0 bg-black bg-opacity-60 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleProfilePictureUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingPicture}
+                  className="p-2 bg-primary hover:bg-primary-light rounded-full text-white transition-colors disabled:opacity-50"
+                  title="Upload profile picture"
+                >
+                  <Upload className="w-4 h-4" />
+                </button>
+                {student.profile_picture && (
+                  <button
+                    onClick={handleDeleteProfilePicture}
+                    disabled={uploadingPicture}
+                    className="p-2 bg-danger hover:bg-danger/80 rounded-full text-white transition-colors disabled:opacity-50"
+                    title="Delete profile picture"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             </div>
+            
             <div>
               <h1 className="text-3xl font-bold text-white mb-2">{student.full_name}</h1>
               <div className="flex items-center gap-4 text-sm text-gray-400">
@@ -238,17 +369,37 @@ const StudentDetailPage: React.FC = () => {
                       {session.face_crops.map((crop) => (
                         <div
                           key={crop.id}
-                          className="aspect-square rounded-lg overflow-hidden border border-dark-border hover:border-primary cursor-pointer transition-colors"
-                          onClick={() =>
-                            navigate(`/classes/${classId}/sessions/${session.session_id}/images/${crop.image_id}`)
-                          }
-                          title={`View in Image ${crop.image_id}`}
+                          className="relative group aspect-square rounded-lg overflow-hidden border border-dark-border hover:border-primary transition-colors"
+                          onMouseEnter={() => setHoveredCropId(crop.id)}
+                          onMouseLeave={() => setHoveredCropId(null)}
                         >
                           <img
                             src={getImageUrl(crop.crop_image_path)}
                             alt={`Face crop ${crop.id}`}
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-cover cursor-pointer"
+                            onClick={() =>
+                              navigate(`/classes/${classId}/sessions/${session.session_id}/images/${crop.image_id}`)
+                            }
+                            title={`View in Image ${crop.image_id}`}
                           />
+                          
+                          {/* Set as Profile button overlay */}
+                          {hoveredCropId === crop.id && (
+                            <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSetProfileFromCrop(crop.id);
+                                }}
+                                disabled={settingFromCrop}
+                                className="px-2 py-1 bg-primary hover:bg-primary-light rounded text-white text-xs font-medium transition-colors disabled:opacity-50 flex items-center gap-1"
+                                title="Set as profile picture"
+                              >
+                                <Check className="w-3 h-3" />
+                                Set as Profile
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

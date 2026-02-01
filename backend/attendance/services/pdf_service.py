@@ -308,14 +308,44 @@ class AttendancePDFService(BasePDFService):
         attended_count = attended_sessions.count()
         attendance_rate = (attended_count / total_sessions * 100) if total_sessions > 0 else 0
         
-        # Student header with attendance stats
+        # Student header with profile picture and attendance stats
         student_name = self._process_rtl_text(student.full_name)
         header_text = (
             f"{student_name} | "
             f"Presence: {attended_count}/{total_sessions} ({attendance_rate:.0f}%)"
         )
-        header = Paragraph(header_text, self.student_header_style)
-        elements.append(header)
+        
+        # Create header with profile picture
+        if student.profile_picture and student.profile_picture.path and os.path.exists(student.profile_picture.path):
+            # Create a table with profile picture on the left and student info on the right
+            profile_img = self._load_image(
+                student.profile_picture.path,
+                width=0.6*inch,
+                height=0.6*inch
+            )
+            
+            if profile_img:
+                header_paragraph = Paragraph(header_text, self.student_header_style)
+                header_table = Table(
+                    [[profile_img, header_paragraph]],
+                    colWidths=[0.7*inch, self.page_width - 1.7*inch]
+                )
+                header_table.setStyle(TableStyle([
+                    ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 2),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                ]))
+                elements.append(header_table)
+            else:
+                # Fallback if image can't be loaded
+                header = Paragraph(header_text, self.student_header_style)
+                elements.append(header)
+        else:
+            # No profile picture - just show the text header
+            header = Paragraph(header_text, self.student_header_style)
+            elements.append(header)
+        
         elements.append(Spacer(1, 0.15*inch))
         
         # If student attended no sessions, show message
