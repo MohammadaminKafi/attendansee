@@ -265,6 +265,61 @@ export const classesAPI = {
     );
     return response.data;
   },
+
+  // Management actions
+  clearClass: async (classId: number): Promise<{
+    status: string;
+    message: string;
+    sessions_deleted: number;
+    images_deleted: number;
+    face_crops_deleted: number;
+    students_deleted: number;
+    manual_attendance_deleted: number;
+  }> => {
+    const response = await api.post(
+      `/attendance/classes/${classId}/clear-class/`
+    );
+    return response.data;
+  },
+
+  resetSessions: async (classId: number): Promise<{
+    status: string;
+    message: string;
+    sessions_reset: number;
+    images_reset: number;
+    face_crops_deleted: number;
+  }> => {
+    const response = await api.post(
+      `/attendance/classes/${classId}/reset-sessions/`
+    );
+    return response.data;
+  },
+
+  clearStudents: async (classId: number): Promise<{
+    status: string;
+    message: string;
+    students_deleted: number;
+    face_crops_unassigned: number;
+    manual_attendance_deleted: number;
+  }> => {
+    const response = await api.post(
+      `/attendance/classes/${classId}/clear-students/`
+    );
+    return response.data;
+  },
+
+  resetStudents: async (classId: number): Promise<{
+    status: string;
+    message: string;
+    face_crops_unassigned: number;
+    manual_attendance_deleted: number;
+    students_kept: number;
+  }> => {
+    const response = await api.post(
+      `/attendance/classes/${classId}/reset-students/`
+    );
+    return response.data;
+  },
 };
 
 // Sessions API
@@ -389,6 +444,43 @@ export const sessionsAPI = {
     const response = await api.get(`/attendance/sessions/${sessionId}/manual-attendance/`);
     return response.data;
   },
+
+  // Management actions
+  clearSession: async (sessionId: number): Promise<{
+    status: string;
+    message: string;
+    images_deleted: number;
+    face_crops_deleted: number;
+    manual_attendance_deleted: number;
+  }> => {
+    const response = await api.post(
+      `/attendance/sessions/${sessionId}/clear-session/`
+    );
+    return response.data;
+  },
+
+  resetSession: async (sessionId: number): Promise<{
+    status: string;
+    message: string;
+    images_reset: number;
+    face_crops_deleted: number;
+  }> => {
+    const response = await api.post(
+      `/attendance/sessions/${sessionId}/reset-session/`
+    );
+    return response.data;
+  },
+
+  unassignAll: async (sessionId: number): Promise<{
+    status: string;
+    message: string;
+    face_crops_unassigned: number;
+  }> => {
+    const response = await api.post(
+      `/attendance/sessions/${sessionId}/unassign-all/`
+    );
+    return response.data;
+  },
 };
 
 // Students API
@@ -508,6 +600,11 @@ export const studentsAPI = {
     );
     return response.data;
   },
+
+  unassignAllFaces: async (studentId: number): Promise<{ status: string; unassigned_count: number; message: string }> => {
+    const response = await api.post(`/attendance/students/${studentId}/unassign-all-faces/`);
+    return response.data;
+  },
 };
 
 // Images API
@@ -546,6 +643,24 @@ export const imagesAPI = {
       `/attendance/images/${imageId}/process-image/`,
       options || {}
     );
+    return response.data;
+  },
+
+  reprocessImage: async (imageId: number, options?: ProcessImageData): Promise<ProcessImageResponse & { deleted_crops: number }> => {
+    const response = await api.post(
+      `/attendance/images/${imageId}/reprocess-image/`,
+      options || {}
+    );
+    return response.data;
+  },
+
+  clearImage: async (imageId: number): Promise<{ status: string; deleted_crops: number; message: string }> => {
+    const response = await api.post(`/attendance/images/${imageId}/clear-image/`);
+    return response.data;
+  },
+
+  unassignAll: async (imageId: number): Promise<{ status: string; unassigned_count: number; message: string }> => {
+    const response = await api.post(`/attendance/images/${imageId}/unassign-all/`);
     return response.data;
   },
 };

@@ -18,8 +18,10 @@ import {
   AutoAssignOptions,
   AutoAssignResultModal,
   ManualAssignModal,
+  ActionsMenu,
+  ConfirmationModal,
 } from '@/components/ui';
-import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users, UserCheck, UserCog, Hand, RotateCcw } from 'lucide-react';
+import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users, UserCog, Hand, RotateCcw, Wand2 } from 'lucide-react';
 
 const SessionDetailPage: React.FC = () => {
   const { classId, sessionId } = useParams<{ classId: string; sessionId: string }>();
@@ -70,6 +72,12 @@ const SessionDetailPage: React.FC = () => {
   const [showManualAttendanceModal, setShowManualAttendanceModal] = useState(false);
   const [manualAttendanceRecords, setManualAttendanceRecords] = useState<ManualAttendance[]>([]);
   const [loadingManualAttendance, setLoadingManualAttendance] = useState(false);
+
+  // Management action states
+  const [showClearSessionModal, setShowClearSessionModal] = useState(false);
+  const [showResetSessionModal, setShowResetSessionModal] = useState(false);
+  const [showUnassignAllModal, setShowUnassignAllModal] = useState(false);
+  const [managementProcessing, setManagementProcessing] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -514,6 +522,73 @@ const SessionDetailPage: React.FC = () => {
     }
   };
 
+  // Management action handlers
+  const handleClearSession = async () => {
+    if (!sessionId) return;
+    
+    try {
+      setManagementProcessing(true);
+      setError(null);
+      
+      await sessionsAPI.clearSession(parseInt(sessionId));
+      
+      setShowClearSessionModal(false);
+      
+      // Reload data
+      await loadData();
+    } catch (err: any) {
+      console.error('Error clearing session:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to clear session';
+      setError(errorMsg);
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
+  const handleResetSession = async () => {
+    if (!sessionId) return;
+    
+    try {
+      setManagementProcessing(true);
+      setError(null);
+      
+      await sessionsAPI.resetSession(parseInt(sessionId));
+      
+      setShowResetSessionModal(false);
+      
+      // Reload data
+      await loadData();
+    } catch (err: any) {
+      console.error('Error resetting session:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to reset session';
+      setError(errorMsg);
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
+  const handleUnassignAll = async () => {
+    if (!sessionId) return;
+    
+    try {
+      setManagementProcessing(true);
+      setError(null);
+      
+      await sessionsAPI.unassignAll(parseInt(sessionId));
+      
+      setShowUnassignAllModal(false);
+      
+      // Reload data
+      await loadData();
+    } catch (err: any) {
+      console.error('Error unassigning face crops:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to unassign face crops';
+      setError(errorMsg);
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -554,13 +629,13 @@ const SessionDetailPage: React.FC = () => {
         <span className="text-sm font-medium">Back to Class</span>
       </button>
 
-      <Breadcrumb items={breadcrumbItems} />
+      <Breadcrumb items={breadcrumbItems} className="mb-6" />
 
-      {/* Session Header */}
-      <Card className="mb-6">
+      {/* Header */}
+      <div className="mb-8">
         <div className="flex items-start justify-between mb-4">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-2">{session.name}</h1>
+            <h1 className="text-3xl font-bold text-gray-100 mb-2">{session.name}</h1>
             <div className="flex items-center gap-4 text-sm text-gray-400">
               <span>Date: {new Date(session.date).toLocaleDateString()}</span>
               {session.start_time && <span>Start: {session.start_time}</span>}
@@ -573,26 +648,141 @@ const SessionDetailPage: React.FC = () => {
         </div>
         
         {session.notes && (
-          <div className="mt-4 p-4 bg-dark-hover rounded-lg border border-dark-border">
+          <div className="mt-4 p-4 bg-dark-card rounded-lg border border-dark-border">
             <p className="text-sm text-gray-300">{session.notes}</p>
           </div>
         )}
+      </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-4">
-          <div className="p-4 bg-dark-hover rounded-lg border border-dark-border hover:border-primary transition-colors">
-            <p className="text-sm text-gray-400">Images</p>
-            <p className="text-2xl font-bold text-white">{images.length}</p>
-          </div>
-          <div className="p-4 bg-dark-hover rounded-lg border border-dark-border hover:border-primary transition-colors">
-            <p className="text-sm text-gray-400">Total Faces</p>
-            <p className="text-2xl font-bold text-white">{session.total_faces_count}</p>
-          </div>
-          <div className="p-4 bg-dark-hover rounded-lg border border-dark-border hover:border-primary transition-colors">
-            <p className="text-sm text-gray-400">Identified</p>
-            <p className="text-2xl font-bold text-white">{session.identified_faces_count}</p>
-          </div>
+      {/* Session-level Actions */}
+      <div className="mb-6">
+        <ActionsMenu
+          categories={[
+            {
+              label: 'AI Actions',
+              items: [
+                {
+                  id: 'process-images',
+                  label: 'Process All Images',
+                  description: `Detect and extract faces from all images. ${
+                    images.filter(img => !img.is_processed).length > 0
+                      ? `${images.filter(img => !img.is_processed).length} unprocessed image${
+                          images.filter(img => !img.is_processed).length !== 1 ? 's' : ''
+                        }`
+                      : 'All images processed'
+                  }`,
+                  icon: <Layers className="w-5 h-5" />,
+                  onClick: handleProcessAllImages,
+                  disabled: processingAll || images.filter(img => !img.is_processed).length === 0,
+                  isProcessing: processingAll,
+                },
+                {
+                  id: 'generate-embeddings',
+                  label: 'Generate Embeddings',
+                  description: `Generate face embeddings for recognition. ${
+                    faceCrops.filter(c => !c.embedding_model).length
+                  } of ${faceCrops.length} face${faceCrops.length !== 1 ? 's' : ''} need embedding${
+                    faceCrops.filter(c => !c.embedding_model).length !== 1 ? 's' : ''
+                  }`,
+                  icon: <Sparkles className="w-5 h-5" />,
+                  onClick: () => setShowEmbeddingModal(true),
+                  disabled: generatingEmbeddings || faceCrops.length === 0,
+                  isProcessing: generatingEmbeddings,
+                },
+                {
+                  id: 'auto-assign',
+                  label: 'Identify All Students',
+                  description: 'Automatically identify and assign all unidentified faces to students',
+                  icon: <Wand2 className="w-5 h-5" />,
+                  onClick: () => setShowAutoAssignModal(true),
+                  disabled: autoAssignInProgress || faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0,
+                  isProcessing: autoAssignInProgress,
+                },
+                {
+                  id: 'cluster-faces',
+                  label: 'Group Student Faces',
+                  description: 'Automatically cluster similar faces together to create student profiles',
+                  icon: <Users className="w-5 h-5" />,
+                  onClick: () => setShowClusteringModal(true),
+                  disabled: clusteringInProgress || faceCrops.length === 0,
+                  isProcessing: clusteringInProgress,
+                },
+              ],
+            },
+            {
+              label: 'Manual Actions',
+              items: [
+                {
+                  id: 'manual-assignment',
+                  label: 'Assign Student Face',
+                  description: 'Manually review and assign unidentified faces to students',
+                  icon: <UserCog className="w-5 h-5" />,
+                  onClick: handleOpenManualAssign,
+                  disabled: loadingManualSuggestions || faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0,
+                  isProcessing: loadingManualSuggestions,
+                },
+                {
+                  id: 'manual-attendance',
+                  label: 'Mark Manual Attendance',
+                  description: 'Manually mark students as present or absent in this session',
+                  icon: <Hand className="w-5 h-5" />,
+                  onClick: openManualAttendanceModal,
+                  disabled: loadingManualAttendance || students.length === 0,
+                  isProcessing: loadingManualAttendance,
+                },
+              ],
+            },
+            {
+              label: 'Management',
+              items: [
+                {
+                  id: 'unassign-all',
+                  label: 'Unassign All Faces',
+                  description: 'Remove all student assignments from face crops in this session',
+                  icon: <RotateCcw className="w-5 h-5" />,
+                  onClick: () => setShowUnassignAllModal(true),
+                  disabled: managementProcessing || faceCrops.filter(c => c.is_identified).length === 0,
+                  isProcessing: false,
+                },
+                {
+                  id: 'reset-session',
+                  label: 'Reset Session',
+                  description: 'Remove all processing results while keeping original images',
+                  icon: <RotateCcw className="w-5 h-5" />,
+                  onClick: () => setShowResetSessionModal(true),
+                  disabled: managementProcessing || images.length === 0,
+                  isProcessing: false,
+                },
+                {
+                  id: 'clear-session',
+                  label: 'Clear All Session Data',
+                  description: 'Delete all images, face crops, and attendance records',
+                  icon: <Trash2 className="w-5 h-5" />,
+                  onClick: () => setShowClearSessionModal(true),
+                  disabled: managementProcessing,
+                  isProcessing: false,
+                },
+              ],
+            },
+          ]}
+        />
+      </div>
+
+      {/* Statistics */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div className="p-4 bg-dark-card rounded-lg border border-dark-border hover:border-primary transition-colors">
+          <p className="text-sm text-gray-400">Images</p>
+          <p className="text-2xl font-bold text-white">{images.length}</p>
         </div>
-      </Card>
+        <div className="p-4 bg-dark-card rounded-lg border border-dark-border hover:border-primary transition-colors">
+          <p className="text-sm text-gray-400">Total Faces</p>
+          <p className="text-2xl font-bold text-white">{session.total_faces_count}</p>
+        </div>
+        <div className="p-4 bg-dark-card rounded-lg border border-dark-border hover:border-primary transition-colors">
+          <p className="text-sm text-gray-400">Identified</p>
+          <p className="text-2xl font-bold text-white">{session.identified_faces_count}</p>
+        </div>
+      </div>
 
       {/* Upload Section */}
       <Card className="mb-6">
@@ -603,28 +793,18 @@ const SessionDetailPage: React.FC = () => {
               {images.length} / 20 images uploaded • {images.filter(img => img.is_processed).length} processed
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button
-              onClick={handleProcessAllImages}
-              disabled={processingAll || images.filter(img => !img.is_processed).length === 0}
-              variant="secondary"
-            >
-              <Layers className="w-4 h-4 mr-2" />
-              Process All ({images.filter(img => !img.is_processed).length})
-            </Button>
-            <label className={`inline-flex items-center justify-center btn-primary px-4 py-2 ${uploading || images.length >= 20 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handleFileSelect}
-                disabled={uploading || images.length >= 20}
-                className="hidden"
-              />
-              <Upload className="w-4 h-4 mr-2" />
-              {uploading ? 'Uploading...' : 'Upload Images'}
-            </label>
-          </div>
+          <label className={`inline-flex items-center justify-center btn-primary px-4 py-2 ${uploading || images.length >= 20 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFileSelect}
+              disabled={uploading || images.length >= 20}
+              className="hidden"
+            />
+            <Upload className="w-4 h-4 mr-2" />
+            {uploading ? 'Uploading...' : 'Upload Images'}
+          </label>
         </div>
 
         {error && (
@@ -746,57 +926,11 @@ const SessionDetailPage: React.FC = () => {
       {/* Face Crops Section */}
       {showFaceCropsSection && (
         <Card className="mt-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-xl font-semibold text-white">Session Face Crops</h2>
-              <p className="text-sm text-gray-400 mt-1">
-                All detected faces across {images.length} image{images.length !== 1 ? 's' : ''}
-              </p>
-            </div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <Button
-                onClick={() => setShowEmbeddingModal(true)}
-                variant="primary"
-                disabled={faceCrops.length === 0}
-              >
-                <Sparkles className="w-4 h-4 mr-2" />
-                Generate Embeddings
-              </Button>
-              <Button
-                onClick={() => setShowAutoAssignModal(true)}
-                variant="secondary"
-                disabled={faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0 || autoAssignInProgress}
-              >
-                <UserCheck className="w-4 h-4 mr-2" />
-                Auto-Assign All
-              </Button>
-              <Button
-                onClick={handleOpenManualAssign}
-                variant="secondary"
-                disabled={faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0 || loadingManualSuggestions}
-              >
-                <UserCog className="w-4 h-4 mr-2" />
-                Manual Assignment
-              </Button>
-              <Button
-                onClick={() => setShowClusteringModal(true)}
-                variant="secondary"
-                disabled={faceCrops.length === 0 || clusteringInProgress}
-              >
-                <Users className="w-4 h-4 mr-2" />
-                Cluster Faces
-              </Button>
-              <Button
-                onClick={openManualAttendanceModal}
-                variant="secondary"
-              >
-                <Hand className="w-4 h-4 mr-2" />
-                Manual Attendance
-              </Button>
-              <span className="text-sm text-gray-400">
-                {faceCrops.filter(c => !c.embedding_model).length} / {faceCrops.length} need embeddings
-              </span>
-            </div>
+          <div className="mb-4">
+            <h2 className="text-xl font-semibold text-white">Session Face Crops</h2>
+            <p className="text-sm text-gray-400 mt-1">
+              All detected faces across {images.length} image{images.length !== 1 ? 's' : ''} • {faceCrops.filter(c => !c.embedding_model).length} / {faceCrops.length} need embeddings
+            </p>
           </div>
           <FaceCropsSection
             faceCrops={faceCrops}
@@ -1098,6 +1232,40 @@ const SessionDetailPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Management Confirmation Modals */}
+      <ConfirmationModal
+        isOpen={showClearSessionModal}
+        onClose={() => setShowClearSessionModal(false)}
+        onConfirm={handleClearSession}
+        title="Clear All Session Data?"
+        message="This will permanently delete all images, face crops, and manual attendance records in this session. This action cannot be undone."
+        confirmText="Clear All Data"
+        isDestructive={true}
+        isProcessing={managementProcessing}
+      />
+
+      <ConfirmationModal
+        isOpen={showResetSessionModal}
+        onClose={() => setShowResetSessionModal(false)}
+        onConfirm={handleResetSession}
+        title="Reset Session?"
+        message="This will delete all face crops and reset processing status for all images. Original images will be kept but you'll need to reprocess them. This action cannot be undone."
+        confirmText="Reset Session"
+        isDestructive={true}
+        isProcessing={managementProcessing}
+      />
+
+      <ConfirmationModal
+        isOpen={showUnassignAllModal}
+        onClose={() => setShowUnassignAllModal(false)}
+        onConfirm={handleUnassignAll}
+        title="Unassign All Faces?"
+        message="This will remove all student assignments from face crops in this session. Face crops will be kept but will become unidentified. This action cannot be undone."
+        confirmText="Unassign All"
+        isDestructive={true}
+        isProcessing={managementProcessing}
+      />
     </div>
   );
 };
