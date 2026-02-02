@@ -23,6 +23,7 @@ import {
   UserX, 
   Edit2, 
   Save,
+  User,
   X as XIcon,
   Play,
   CheckCircle,
@@ -818,13 +819,31 @@ const ImageDetailPage: React.FC = () => {
                       : 'border-dark-border hover:border-gray-600 bg-dark-hover'
                   }`}
                 >
-                  <p className="text-white font-medium">{student.full_name}</p>
-                  {student.student_id && (
-                    <p className="text-xs text-gray-400 mt-1">ID: {student.student_id}</p>
-                  )}
-                  {student.email && (
-                    <p className="text-xs text-gray-400">{student.email}</p>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {/* Profile Picture */}
+                    <div className="w-10 h-10 rounded-full overflow-hidden bg-dark-bg border border-dark-border flex-shrink-0">
+                      {student.profile_picture ? (
+                        <img
+                          src={student.profile_picture}
+                          alt={student.full_name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-gray-500">
+                          <User className="w-5 h-5" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-medium truncate">{student.full_name}</p>
+                      {student.student_id && (
+                        <p className="text-xs text-gray-400 mt-1">ID: {student.student_id}</p>
+                      )}
+                      {student.email && (
+                        <p className="text-xs text-gray-400 truncate">{student.email}</p>
+                      )}
+                    </div>
+                  </div>
                 </button>
               ))}
           </div>

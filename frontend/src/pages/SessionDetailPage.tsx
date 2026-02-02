@@ -20,7 +20,7 @@ import {
   ActionsMenu,
   ConfirmationModal,
 } from '@/components/ui';
-import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users, UserCog, Hand, RotateCcw, Wand2 } from 'lucide-react';
+import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users, UserCog, Hand, RotateCcw, Wand2, User } from 'lucide-react';
 
 const SessionDetailPage: React.FC = () => {
   const { classId, sessionId } = useParams<{ classId: string; sessionId: string }>();
@@ -1098,11 +1098,27 @@ const SessionDetailPage: React.FC = () => {
                     key={student.id}
                     className="flex items-center justify-between p-3 bg-dark-hover rounded-lg hover:bg-dark-border transition-colors"
                   >
-                    <div>
-                      <p className="text-white font-medium">{student.full_name}</p>
-                      {student.student_id && (
-                        <p className="text-sm text-gray-500">{student.student_id}</p>
-                      )}
+                    <div className="flex items-center gap-3">
+                      {/* Profile Picture */}
+                      <div className="w-10 h-10 rounded-full overflow-hidden bg-dark-bg border border-dark-border flex-shrink-0">
+                        {student.profile_picture ? (
+                          <img
+                            src={student.profile_picture}
+                            alt={student.full_name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-gray-500">
+                            <User className="w-5 h-5" />
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-white font-medium">{student.full_name}</p>
+                        {student.student_id && (
+                          <p className="text-sm text-gray-500">{student.student_id}</p>
+                        )}
+                      </div>
                     </div>
                     
                     <div className="flex items-center gap-1 border border-dark-border rounded-lg p-1">
