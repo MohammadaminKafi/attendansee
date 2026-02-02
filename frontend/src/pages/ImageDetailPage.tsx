@@ -14,6 +14,8 @@ import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { ProcessingOverlay } from '@/components/ui/ProcessingSpinner';
+import { ActionsMenu } from '@/components/ui/ActionsMenu';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { 
   ArrowLeft, 
   Trash2, 
@@ -24,7 +26,13 @@ import {
   X as XIcon,
   Play,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Sparkles,
+  Wand2,
+  UserCog,
+  Hand,
+  RotateCcw,
+  RefreshCw
 } from 'lucide-react';
 
 const ImageDetailPage: React.FC = () => {
@@ -67,6 +75,15 @@ const ImageDetailPage: React.FC = () => {
   // Sorting state
   const [sortOption, setSortOption] = useState<'identified-first' | 'unidentified-first' | 'name-asc' | 'name-desc' | 'created-desc'>('identified-first');
 
+  // Management action states
+  const [showClearImageModal, setShowClearImageModal] = useState(false);
+  const [showUnassignAllModal, setShowUnassignAllModal] = useState(false);
+  const [managementProcessing, setManagementProcessing] = useState(false);
+  const [generatingEmbeddings] = useState(false);
+  const [autoAssigning] = useState(false);
+  const [loadingManualSuggestions] = useState(false);
+  const [loadingManualAttendance] = useState(false);
+
   useEffect(() => {
     loadData();
   }, [classId, sessionId, imageId]);
@@ -106,11 +123,20 @@ const ImageDetailPage: React.FC = () => {
       setProcessing(true);
       setError(null);
 
-      await imagesAPI.processImage(parseInt(imageId), {
-        detector_backend: 'retinaface',
-        confidence_threshold: 0.5,
-        apply_background_effect: true,
-      });
+      // If already processed, use reprocess endpoint
+      if (image?.is_processed) {
+        await imagesAPI.reprocessImage(parseInt(imageId), {
+          detector_backend: 'retinaface',
+          confidence_threshold: 0.5,
+          apply_background_effect: true,
+        });
+      } else {
+        await imagesAPI.processImage(parseInt(imageId), {
+          detector_backend: 'retinaface',
+          confidence_threshold: 0.5,
+          apply_background_effect: true,
+        });
+      }
 
       // Reload data to get the processed image and face crops
       await loadData();
@@ -120,6 +146,62 @@ const ImageDetailPage: React.FC = () => {
     } finally {
       setProcessing(false);
     }
+  };
+
+  const handleClearImage = async () => {
+    if (!imageId) return;
+
+    try {
+      setManagementProcessing(true);
+      await imagesAPI.clearImage(parseInt(imageId));
+      
+      // Reload data
+      await loadData();
+      setShowClearImageModal(false);
+    } catch (err: any) {
+      console.error('Error clearing image:', err);
+      setError(err.response?.data?.error || 'Failed to clear image');
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
+  const handleUnassignAll = async () => {
+    if (!imageId) return;
+
+    try {
+      setManagementProcessing(true);
+      await imagesAPI.unassignAll(parseInt(imageId));
+      
+      // Reload data
+      await loadData();
+      setShowUnassignAllModal(false);
+    } catch (err: any) {
+      console.error('Error unassigning all:', err);
+      setError(err.response?.data?.error || 'Failed to unassign all faces');
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
+  const handleGenerateEmbeddings = async () => {
+    // Placeholder - similar to session page implementation
+    console.log('Generate embeddings not yet implemented');
+  };
+
+  const handleAutoAssign = async () => {
+    // Placeholder - similar to session page implementation
+    console.log('Auto assign not yet implemented');
+  };
+
+  const handleOpenManualAssign = async () => {
+    // Placeholder - similar to session page implementation
+    console.log('Manual assign not yet implemented');
+  };
+
+  const handleMarkManualAttendance = async () => {
+    // Placeholder - similar to session page implementation
+    console.log('Manual attendance not yet implemented');
   };
 
   const handleAssignStudent = async () => {
@@ -390,17 +472,101 @@ const ImageDetailPage: React.FC = () => {
               <span>Face Crops: {faceCrops.length}</span>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Badge variant={image.is_processed ? 'success' : 'warning'}>
-              {image.is_processed ? 'Processed' : 'Pending'}
-            </Badge>
-            {!image.is_processed && (
-              <Button onClick={handleProcessImage} disabled={processing}>
-                <Play className="w-4 h-4 mr-2" />
-                Process Image
-              </Button>
-            )}
-          </div>
+          <Badge variant={image.is_processed ? 'success' : 'warning'}>
+            {image.is_processed ? 'Processed' : 'Pending'}
+          </Badge>
+        </div>
+
+        {/* Actions Menu */}
+        <div className="mb-6">
+          <ActionsMenu
+            categories={[
+              {
+                label: 'AI Actions',
+                items: [
+                  {
+                    id: 'process-image',
+                    label: image.is_processed ? 'Reprocess Image' : 'Process Image',
+                    description: image.is_processed 
+                      ? 'Detect and extract faces again. All existing face crops and assignments will be deleted.'
+                      : 'Detect and extract faces from this image',
+                    icon: image.is_processed ? <RefreshCw className="w-5 h-5" /> : <Play className="w-5 h-5" />,
+                    onClick: handleProcessImage,
+                    disabled: processing,
+                    isProcessing: processing,
+                  },
+                  {
+                    id: 'generate-embeddings',
+                    label: 'Generate Embeddings',
+                    description: `Generate face embeddings for recognition. ${
+                      faceCrops.filter(c => !c.embedding_model).length
+                    } of ${faceCrops.length} face${faceCrops.length !== 1 ? 's' : ''} need embedding${
+                      faceCrops.filter(c => !c.embedding_model).length !== 1 ? 's' : ''
+                    }`,
+                    icon: <Sparkles className="w-5 h-5" />,
+                    onClick: handleGenerateEmbeddings,
+                    disabled: generatingEmbeddings || faceCrops.length === 0,
+                    isProcessing: generatingEmbeddings,
+                  },
+                  {
+                    id: 'auto-assign',
+                    label: 'Identify All Students',
+                    description: 'Automatically identify and assign all unidentified faces to students',
+                    icon: <Wand2 className="w-5 h-5" />,
+                    onClick: handleAutoAssign,
+                    disabled: autoAssigning || faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0,
+                    isProcessing: autoAssigning,
+                  },
+                ],
+              },
+              {
+                label: 'Manual Actions',
+                items: [
+                  {
+                    id: 'manual-assignment',
+                    label: 'Assign Student Face',
+                    description: 'Manually review and assign unidentified faces based on similar identified crops',
+                    icon: <UserCog className="w-5 h-5" />,
+                    onClick: handleOpenManualAssign,
+                    disabled: loadingManualSuggestions || faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0,
+                    isProcessing: loadingManualSuggestions,
+                  },
+                  {
+                    id: 'manual-attendance',
+                    label: 'Mark Manual Attendance',
+                    description: 'Manually mark students as present or absent',
+                    icon: <Hand className="w-5 h-5" />,
+                    onClick: handleMarkManualAttendance,
+                    disabled: loadingManualAttendance || students.length === 0,
+                    isProcessing: loadingManualAttendance,
+                  },
+                ],
+              },
+              {
+                label: 'Management',
+                items: [
+                  {
+                    id: 'unassign-all',
+                    label: 'Unassign All Faces',
+                    description: 'Remove all student assignments from face crops in this image',
+                    icon: <RotateCcw className="w-5 h-5" />,
+                    onClick: () => setShowUnassignAllModal(true),
+                    disabled: managementProcessing || faceCrops.filter(c => c.is_identified).length === 0,
+                    isProcessing: false,
+                  },
+                  {
+                    id: 'clear-image',
+                    label: 'Clear Image',
+                    description: 'Unprocess this image and remove all face crops and assignments',
+                    icon: <Trash2 className="w-5 h-5" />,
+                    onClick: () => setShowClearImageModal(true),
+                    disabled: managementProcessing || !image.is_processed,
+                    isProcessing: false,
+                  },
+                ],
+              },
+            ]}
+          />
         </div>
 
         {/* Image Display */}
@@ -827,6 +993,30 @@ const ImageDetailPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Clear Image Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showClearImageModal}
+        onClose={() => setShowClearImageModal(false)}
+        onConfirm={handleClearImage}
+        title="Clear Image"
+        message="Are you sure you want to clear this image? This will remove all face crops and student assignments. The image will be marked as unprocessed."
+        confirmText="Clear Image"
+        isDestructive={true}
+        isProcessing={managementProcessing}
+      />
+
+      {/* Unassign All Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showUnassignAllModal}
+        onClose={() => setShowUnassignAllModal(false)}
+        onConfirm={handleUnassignAll}
+        title="Unassign All Faces"
+        message={`Are you sure you want to unassign all ${faceCrops.filter(c => c.is_identified).length} identified face crop(s)? This will remove all student assignments but keep the face crops.`}
+        confirmText="Unassign All"
+        isDestructive={false}
+        isProcessing={managementProcessing}
+      />
     </div>
   );
 };

@@ -8,7 +8,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from django.http import HttpResponse
 import os
-from .models import Class, Student, Session, Image, FaceCrop
+from .models import Class, Student, Session, Image, FaceCrop, ManualAttendance
 from .serializers import (
     ClassSerializer, StudentSerializer, SessionSerializer,
     ImageSerializer, FaceCropSerializer, FaceCropDetailSerializer,
@@ -1002,6 +1002,180 @@ class ClassViewSet(viewsets.ModelViewSet):
             'sessions_covered': len(sessions_covered),
             'suggestions': suggestions
         })
+    
+    @action(detail=True, methods=['post'], url_path='clear-class')
+    def clear_class(self, request, pk=None):
+        """
+        Clear all data for a class including sessions, images, face crops, and students.
+        This is a destructive operation that cannot be undone.
+        
+        Returns:
+        - sessions_deleted: Number of sessions deleted
+        - images_deleted: Number of images deleted
+        - face_crops_deleted: Number of face crops deleted
+        - students_deleted: Number of students deleted
+        - manual_attendance_deleted: Number of manual attendance records deleted
+        """
+        class_obj = self.get_object()
+        
+        # Count before deletion
+        sessions_count = class_obj.sessions.count()
+        students_count = class_obj.students.count()
+        
+        # Count related objects
+        images_count = Image.objects.filter(session__class_session=class_obj).count()
+        face_crops_count = FaceCrop.objects.filter(image__session__class_session=class_obj).count()
+        manual_attendance_count = ManualAttendance.objects.filter(session__class_session=class_obj).count()
+        
+        # Delete all sessions (cascade will delete images and face_crops)
+        class_obj.sessions.all().delete()
+        
+        # Delete all students (cascade will delete their face_crops and manual_attendance)
+        class_obj.students.all().delete()
+        
+        return Response({
+            'status': 'success',
+            'message': 'Class data cleared successfully',
+            'sessions_deleted': sessions_count,
+            'images_deleted': images_count,
+            'face_crops_deleted': face_crops_count,
+            'students_deleted': students_count,
+            'manual_attendance_deleted': manual_attendance_count,
+        })
+    
+    @action(detail=True, methods=['post'], url_path='reset-sessions')
+    def reset_sessions(self, request, pk=None):
+        """
+        Reset all sessions in the class by:
+        - Deleting all face crops
+        - Removing processed image paths
+        - Setting is_processed to False for all images
+        - Setting is_processed to False for all sessions
+        
+        This keeps the original images but removes all processing results.
+        
+        Returns:
+        - sessions_reset: Number of sessions reset
+        - images_reset: Number of images reset
+        - face_crops_deleted: Number of face crops deleted
+        """
+        class_obj = self.get_object()
+        
+        # Count face crops before deletion
+        face_crops_count = FaceCrop.objects.filter(image__session__class_session=class_obj).count()
+        
+        # Delete all face crops for this class
+        FaceCrop.objects.filter(image__session__class_session=class_obj).delete()
+        
+        # Get all images for this class
+        images = Image.objects.filter(session__class_session=class_obj)
+        images_count = images.count()
+        
+        # Reset images: set is_processed to False and clear processed_image_path
+        for image in images:
+            image.is_processed = False
+            image.processed_image_path = ''
+            image.processing_date = None
+            image.save(update_fields=['is_processed', 'processed_image_path', 'processing_date', 'updated_at'])
+        
+        # Reset all sessions
+        sessions = class_obj.sessions.all()
+        sessions_count = sessions.count()
+        for session in sessions:
+            session.is_processed = False
+            session.save(update_fields=['is_processed', 'updated_at'])
+        
+        return Response({
+            'status': 'success',
+            'message': 'Sessions reset successfully',
+            'sessions_reset': sessions_count,
+            'images_reset': images_count,
+            'face_crops_deleted': face_crops_count,
+        })
+    
+    @action(detail=True, methods=['post'], url_path='clear-students')
+    def clear_students(self, request, pk=None):
+        """
+        Clear all students from the class and unassign all face crops.
+        This will:
+        - Unassign all face crops from students
+        - Delete all students
+        - Delete all manual attendance records
+        
+        Returns:
+        - students_deleted: Number of students deleted
+        - face_crops_unassigned: Number of face crops unassigned
+        - manual_attendance_deleted: Number of manual attendance records deleted
+        """
+        class_obj = self.get_object()
+        
+        # Count before changes
+        students_count = class_obj.students.count()
+        
+        # Unassign all face crops for students in this class
+        face_crops = FaceCrop.objects.filter(
+            student__class_enrolled=class_obj,
+            student__isnull=False
+        )
+        face_crops_count = face_crops.count()
+        face_crops.update(student=None, is_identified=False, confidence_score=None)
+        
+        # Count and delete manual attendance records
+        manual_attendance_count = ManualAttendance.objects.filter(
+            student__class_enrolled=class_obj
+        ).count()
+        ManualAttendance.objects.filter(student__class_enrolled=class_obj).delete()
+        
+        # Delete all students
+        class_obj.students.all().delete()
+        
+        return Response({
+            'status': 'success',
+            'message': 'Students cleared successfully',
+            'students_deleted': students_count,
+            'face_crops_unassigned': face_crops_count,
+            'manual_attendance_deleted': manual_attendance_count,
+        })
+    
+    @action(detail=True, methods=['post'], url_path='reset-students')
+    def reset_students(self, request, pk=None):
+        """
+        Reset student assignments without deleting students.
+        This will:
+        - Unassign all face crops from students (keep the crops)
+        - Delete all manual attendance records
+        - Keep the student records
+        
+        Returns:
+        - face_crops_unassigned: Number of face crops unassigned
+        - manual_attendance_deleted: Number of manual attendance records deleted
+        - students_kept: Number of students that remain
+        """
+        class_obj = self.get_object()
+        
+        # Unassign all face crops for students in this class
+        face_crops = FaceCrop.objects.filter(
+            student__class_enrolled=class_obj,
+            student__isnull=False
+        )
+        face_crops_count = face_crops.count()
+        face_crops.update(student=None, is_identified=False, confidence_score=None)
+        
+        # Count and delete manual attendance records
+        manual_attendance_count = ManualAttendance.objects.filter(
+            student__class_enrolled=class_obj
+        ).count()
+        ManualAttendance.objects.filter(student__class_enrolled=class_obj).delete()
+        
+        students_count = class_obj.students.count()
+        
+        return Response({
+            'status': 'success',
+            'message': 'Student assignments reset successfully',
+            'face_crops_unassigned': face_crops_count,
+            'manual_attendance_deleted': manual_attendance_count,
+            'students_kept': students_count,
+        })
 
 
 class StudentViewSet(viewsets.ModelViewSet):
@@ -1529,6 +1703,39 @@ class StudentViewSet(viewsets.ModelViewSet):
             'total_records': manual_records.count(),
             'manual_attendance': serializer.data
         })
+    
+    @action(detail=True, methods=['post'], url_path='unassign-all-faces')
+    def unassign_all_faces(self, request, pk=None):
+        """
+        Unassign all face crops from this student.
+        """
+        student = self.get_object()
+        
+        try:
+            # Count face crops before unassignment
+            face_crops_count = student.face_crops.filter(is_identified=True).count()
+            
+            # Unassign all face crops
+            student.face_crops.filter(is_identified=True).update(
+                student=None,
+                is_identified=False
+            )
+            
+            return Response({
+                'status': 'success',
+                'student_id': student.id,
+                'unassigned_count': face_crops_count,
+                'message': f'Unassigned {face_crops_count} face crop(s)'
+            })
+        
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Failed to unassign face crops',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class SessionViewSet(viewsets.ModelViewSet):
@@ -2304,6 +2511,114 @@ class SessionViewSet(viewsets.ModelViewSet):
             'total_records': manual_records.count(),
             'manual_attendance': serializer.data
         })
+    
+    @action(detail=True, methods=['post'], url_path='clear-session')
+    def clear_session(self, request, pk=None):
+        """
+        Clear all data for a session including images and face crops.
+        This is a destructive operation that cannot be undone.
+        
+        Returns:
+        - images_deleted: Number of images deleted
+        - face_crops_deleted: Number of face crops deleted
+        - manual_attendance_deleted: Number of manual attendance records deleted
+        """
+        session_obj = self.get_object()
+        
+        # Count before deletion
+        images_count = session_obj.images.count()
+        face_crops_count = FaceCrop.objects.filter(image__session=session_obj).count()
+        manual_attendance_count = ManualAttendance.objects.filter(session=session_obj).count()
+        
+        # Delete all manual attendance records
+        ManualAttendance.objects.filter(session=session_obj).delete()
+        
+        # Delete all images (cascade will delete face_crops)
+        session_obj.images.all().delete()
+        
+        # Update session processing status
+        session_obj.is_processed = False
+        session_obj.save(update_fields=['is_processed', 'updated_at'])
+        
+        return Response({
+            'status': 'success',
+            'message': 'Session data cleared successfully',
+            'images_deleted': images_count,
+            'face_crops_deleted': face_crops_count,
+            'manual_attendance_deleted': manual_attendance_count,
+        })
+    
+    @action(detail=True, methods=['post'], url_path='reset-session')
+    def reset_session(self, request, pk=None):
+        """
+        Reset the session by:
+        - Deleting all face crops
+        - Removing processed image paths
+        - Setting is_processed to False for all images
+        - Setting is_processed to False for the session
+        
+        This keeps the original images but removes all processing results.
+        
+        Returns:
+        - images_reset: Number of images reset
+        - face_crops_deleted: Number of face crops deleted
+        """
+        session_obj = self.get_object()
+        
+        # Count face crops before deletion
+        face_crops_count = FaceCrop.objects.filter(image__session=session_obj).count()
+        
+        # Delete all face crops for this session
+        FaceCrop.objects.filter(image__session=session_obj).delete()
+        
+        # Get all images for this session
+        images = session_obj.images.all()
+        images_count = images.count()
+        
+        # Reset images: set is_processed to False and clear processed_image_path
+        for image in images:
+            image.is_processed = False
+            image.processed_image_path = ''
+            image.processing_date = None
+            image.save(update_fields=['is_processed', 'processed_image_path', 'processing_date', 'updated_at'])
+        
+        # Reset session
+        session_obj.is_processed = False
+        session_obj.save(update_fields=['is_processed', 'updated_at'])
+        
+        return Response({
+            'status': 'success',
+            'message': 'Session reset successfully',
+            'images_reset': images_count,
+            'face_crops_deleted': face_crops_count,
+        })
+    
+    @action(detail=True, methods=['post'], url_path='unassign-all')
+    def unassign_all(self, request, pk=None):
+        """
+        Unassign all face crops from students in this session.
+        This will:
+        - Unassign all face crops from students
+        - Keep the face crops but remove their student assignments
+        
+        Returns:
+        - face_crops_unassigned: Number of face crops unassigned
+        """
+        session_obj = self.get_object()
+        
+        # Unassign all face crops in this session
+        face_crops = FaceCrop.objects.filter(
+            image__session=session_obj,
+            student__isnull=False
+        )
+        face_crops_count = face_crops.count()
+        face_crops.update(student=None, is_identified=False, confidence_score=None)
+        
+        return Response({
+            'status': 'success',
+            'message': 'Face crops unassigned successfully',
+            'face_crops_unassigned': face_crops_count,
+        })
 
 
 class ImageViewSet(viewsets.ModelViewSet):
@@ -2475,6 +2790,149 @@ class ImageViewSet(viewsets.ModelViewSet):
             return Response(
                 {
                     'error': 'Failed to process image',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'], url_path='reprocess-image')
+    def reprocess_image(self, request, pk=None):
+        """
+        Reprocess an already processed image.
+        Deletes all existing face crops and their assignments, then reprocesses the image.
+        """
+        from attendance.utils import process_image_with_face_detection
+        
+        image_obj = self.get_object()
+        
+        serializer = ProcessImageSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Extract parameters
+        detector_backend = serializer.validated_data.get('detector_backend', 'retinaface')
+        min_confidence = serializer.validated_data.get('confidence_threshold', 0.0)
+        apply_background_effect = serializer.validated_data.get('apply_background_effect', True)
+        rectangle_color = tuple(serializer.validated_data.get('rectangle_color', [0, 255, 0]))
+        rectangle_thickness = serializer.validated_data.get('rectangle_thickness', 2)
+        
+        try:
+            # Delete all existing face crops (cascade will handle assignments)
+            face_crops_count = image_obj.face_crops.count()
+            image_obj.face_crops.all().delete()
+            
+            # Mark as unprocessed
+            image_obj.is_processed = False
+            image_obj.processing_date = None
+            if image_obj.processed_image_path:
+                # Delete processed image file
+                try:
+                    import os
+                    if os.path.exists(image_obj.processed_image_path.path):
+                        os.remove(image_obj.processed_image_path.path)
+                except Exception:
+                    pass
+            image_obj.processed_image_path = None
+            image_obj.save()
+            
+            # Reprocess the image
+            result = process_image_with_face_detection(
+                image_obj=image_obj,
+                detector_backend=detector_backend,
+                min_confidence=min_confidence,
+                apply_background_effect=apply_background_effect,
+                rectangle_color=rectangle_color,
+                rectangle_thickness=rectangle_thickness
+            )
+            
+            return Response({
+                'status': 'completed',
+                'image_id': image_obj.id,
+                'deleted_crops': face_crops_count,
+                'faces_detected': result['faces_detected'],
+                'crops_created': result['crops_created'],
+                'processed_image_url': result['processed_image_url'],
+                'message': 'Image reprocessed successfully'
+            })
+        
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Failed to reprocess image',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'], url_path='clear-image')
+    def clear_image(self, request, pk=None):
+        """
+        Clear an image by removing all face crops and marking it as unprocessed.
+        """
+        image_obj = self.get_object()
+        
+        try:
+            # Count face crops before deletion
+            face_crops_count = image_obj.face_crops.count()
+            
+            # Delete all face crops (cascade will handle assignments)
+            image_obj.face_crops.all().delete()
+            
+            # Mark as unprocessed
+            image_obj.is_processed = False
+            image_obj.processing_date = None
+            if image_obj.processed_image_path:
+                # Delete processed image file
+                try:
+                    import os
+                    if os.path.exists(image_obj.processed_image_path.path):
+                        os.remove(image_obj.processed_image_path.path)
+                except Exception:
+                    pass
+            image_obj.processed_image_path = None
+            image_obj.save()
+            
+            return Response({
+                'status': 'success',
+                'image_id': image_obj.id,
+                'deleted_crops': face_crops_count,
+                'message': 'Image cleared successfully'
+            })
+        
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Failed to clear image',
+                    'details': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'], url_path='unassign-all')
+    def unassign_all(self, request, pk=None):
+        """
+        Unassign all face crops in this image.
+        """
+        image_obj = self.get_object()
+        
+        try:
+            # Unassign all face crops
+            updated_count = image_obj.face_crops.filter(is_identified=True).update(
+                student=None,
+                is_identified=False
+            )
+            
+            return Response({
+                'status': 'success',
+                'image_id': image_obj.id,
+                'unassigned_count': updated_count,
+                'message': f'Unassigned {updated_count} face crop(s)'
+            })
+        
+        except Exception as e:
+            return Response(
+                {
+                    'error': 'Failed to unassign face crops',
                     'details': str(e)
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

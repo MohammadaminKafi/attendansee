@@ -11,3 +11,5 @@ export type { ClusteringOptions } from './ClusteringModal';
 export { AutoAssignModal, AutoAssignResultModal } from './AutoAssignModal';
 export type { AutoAssignOptions } from './AutoAssignModal';
 export { ManualAssignModal } from './ManualAssignModal';
+export { ActionsMenu } from './ActionsMenu';
+export { ConfirmationModal } from './ConfirmationModal';

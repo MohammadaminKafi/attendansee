@@ -11,10 +11,9 @@ import { SessionsTab } from '@/components/tabs/SessionsTab';
 import { StudentsTab } from '@/components/tabs/StudentsTab';
 import { ReportTab } from '@/components/tabs/ReportTab';
 import { NotesTab } from '@/components/tabs/NotesTab';
-import { EmbeddingGenerationModal, EmbeddingGenerationOptions, ClusteringModal, ClusteringOptions, AutoAssignModal, AutoAssignResultModal, ManualAssignModal } from '@/components/ui';
-import { Button } from '@/components/ui/Button';
+import { EmbeddingGenerationModal, EmbeddingGenerationOptions, ClusteringModal, ClusteringOptions, AutoAssignModal, AutoAssignResultModal, ManualAssignModal, ActionsMenu, ConfirmationModal } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
-import { ArrowLeft, Layers, Sparkles, Users, Wand2, UserCheck } from 'lucide-react';
+import { ArrowLeft, Layers, Sparkles, Users, Wand2, UserCheck, Trash2, RotateCcw } from 'lucide-react';
 
 export const ClassDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -51,6 +50,13 @@ export const ClassDetailPage: React.FC = () => {
   const [manualAssignSuggestions, setManualAssignSuggestions] = useState<any[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [similarFacesCount, setSimilarFacesCount] = useState<number>(5);
+
+  // Management action states
+  const [showClearClassModal, setShowClearClassModal] = useState(false);
+  const [showResetSessionsModal, setShowResetSessionsModal] = useState(false);
+  const [showClearStudentsModal, setShowClearStudentsModal] = useState(false);
+  const [showResetStudentsModal, setShowResetStudentsModal] = useState(false);
+  const [managementProcessing, setManagementProcessing] = useState(false);
 
   const tabs: Tab[] = [
     { id: 'sessions', label: 'Sessions', icon: '📅' },
@@ -291,6 +297,95 @@ export const ClassDetailPage: React.FC = () => {
     }
   };
 
+  // Management action handlers
+  const handleClearClass = async () => {
+    if (!id) return;
+    
+    try {
+      setManagementProcessing(true);
+      setError('');
+      
+      await classesAPI.clearClass(parseInt(id));
+      
+      setShowClearClassModal(false);
+      
+      // Reload class data
+      await loadClassData();
+    } catch (err: any) {
+      console.error('Error clearing class:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to clear class';
+      setError(errorMsg);
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
+  const handleResetSessions = async () => {
+    if (!id) return;
+    
+    try {
+      setManagementProcessing(true);
+      setError('');
+      
+      await classesAPI.resetSessions(parseInt(id));
+      
+      setShowResetSessionsModal(false);
+      
+      // Reload class data
+      await loadClassData();
+    } catch (err: any) {
+      console.error('Error resetting sessions:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to reset sessions';
+      setError(errorMsg);
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
+  const handleClearStudents = async () => {
+    if (!id) return;
+    
+    try {
+      setManagementProcessing(true);
+      setError('');
+      
+      await classesAPI.clearStudents(parseInt(id));
+      
+      setShowClearStudentsModal(false);
+      
+      // Reload class data
+      await loadClassData();
+    } catch (err: any) {
+      console.error('Error clearing students:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to clear students';
+      setError(errorMsg);
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
+  const handleResetStudents = async () => {
+    if (!id) return;
+    
+    try {
+      setManagementProcessing(true);
+      setError('');
+      
+      await classesAPI.resetStudents(parseInt(id));
+      
+      setShowResetStudentsModal(false);
+      
+      // Reload class data
+      await loadClassData();
+    } catch (err: any) {
+      console.error('Error resetting students:', err);
+      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to reset students';
+      setError(errorMsg);
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -357,92 +452,122 @@ export const ClassDetailPage: React.FC = () => {
           )}
         </div>
 
-        {/* Class-level Actions */}
-        <div className="flex gap-3 mb-6">
-          <Button
-            onClick={handleProcessAllImages}
-            disabled={processingImages || (statistics?.unprocessed_images_count === 0)}
-            variant="secondary"
-            className="flex-1 sm:flex-initial"
-          >
-            {processingImages ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <Layers className="w-4 h-4 mr-2" />
-                Process All Images
-                {statistics && statistics.unprocessed_images_count > 0 && (
-                  <span className="ml-1">({statistics.unprocessed_images_count})</span>
-                )}
-              </>
-            )}
-          </Button>
-          <Button
-            onClick={() => setShowEmbeddingModal(true)}
-            disabled={generatingEmbeddings || (statistics?.crops_without_embeddings === 0)}
-            variant="primary"
-            className="flex-1 sm:flex-initial"
-          >
-            {generatingEmbeddings ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 mr-2" />
-                Generate Embeddings
-                {statistics && statistics.total_face_crops > 0 && (
-                  <span className="ml-1">({statistics.crops_without_embeddings} / {statistics.total_face_crops})</span>
-                )}
-              </>
-            )}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => setShowClusteringModal(true)}
-            disabled={!statistics || statistics.total_face_crops === 0 || clusteringInProgress}
-          >
-            <Users className="w-4 h-4 mr-2" />
-            Cluster All Faces
-          </Button>
-          <Button
-            onClick={() => setShowAutoAssignModal(true)}
-            disabled={autoAssigning || !statistics || statistics.total_face_crops === 0}
-            variant="primary"
-          >
-            {autoAssigning ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                Assigning...
-              </>
-            ) : (
-              <>
-                <Wand2 className="w-4 h-4 mr-2" />
-                Auto-Assign All
-              </>
-            )}
-          </Button>
-          <Button
-            onClick={handleOpenManualAssign}
-            disabled={loadingSuggestions || !statistics || statistics.total_face_crops === 0}
-            variant="secondary"
-          >
-            {loadingSuggestions ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                Loading...
-              </>
-            ) : (
-              <>
-                <UserCheck className="w-4 h-4 mr-2" />
-                Manual Assignment
-              </>
-            )}
-          </Button>
+        {/* Class-level Actions - New Hovering Menu */}
+        <div className="mb-6">
+          <ActionsMenu
+            categories={[
+              {
+                label: 'AI Actions',
+                items: [
+                  {
+                    id: 'process-images',
+                    label: 'Process All Images',
+                    description: `Detect and extract faces from all images. ${
+                      statistics
+                        ? statistics.unprocessed_images_count > 0
+                          ? `${statistics.unprocessed_images_count} unprocessed image${
+                              statistics.unprocessed_images_count !== 1 ? 's' : ''
+                            }`
+                          : 'All images processed'
+                        : 'Loading...'
+                    }`,
+                    icon: <Layers className="w-5 h-5" />,
+                    onClick: handleProcessAllImages,
+                    disabled: processingImages || (statistics?.unprocessed_images_count === 0),
+                    isProcessing: processingImages,
+                  },
+                  {
+                    id: 'generate-embeddings',
+                    label: 'Generate Embeddings',
+                    description: `Generate face embeddings for recognition. ${
+                      statistics
+                        ? `${statistics.crops_without_embeddings} of ${statistics.total_face_crops} face${
+                            statistics.total_face_crops !== 1 ? 's' : ''
+                          } need embedding${statistics.crops_without_embeddings !== 1 ? 's' : ''}`
+                        : 'Loading...'
+                    }`,
+                    icon: <Sparkles className="w-5 h-5" />,
+                    onClick: () => setShowEmbeddingModal(true),
+                    disabled: generatingEmbeddings || (statistics?.crops_without_embeddings === 0),
+                    isProcessing: generatingEmbeddings,
+                  },
+                  {
+                    id: 'group-faces',
+                    label: 'Group Student Faces',
+                    description: 'Automatically cluster similar faces together to create student profiles',
+                    icon: <Users className="w-5 h-5" />,
+                    onClick: () => setShowClusteringModal(true),
+                    disabled: !statistics || statistics.total_face_crops === 0 || clusteringInProgress,
+                    isProcessing: clusteringInProgress,
+                  },
+                  {
+                    id: 'identify-students',
+                    label: 'Identify All Students',
+                    description: 'Automatically identify and assign all unidentified faces to students',
+                    icon: <Wand2 className="w-5 h-5" />,
+                    onClick: () => setShowAutoAssignModal(true),
+                    disabled: autoAssigning || !statistics || statistics.total_face_crops === 0,
+                    isProcessing: autoAssigning,
+                  },
+                ],
+              },
+              {
+                label: 'Manual Actions',
+                items: [
+                  {
+                    id: 'manual-assignment',
+                    label: 'Assign Student Face',
+                    description: 'Manually review and assign unidentified faces to students',
+                    icon: <UserCheck className="w-5 h-5" />,
+                    onClick: handleOpenManualAssign,
+                    disabled: loadingSuggestions || !statistics || statistics.total_face_crops === 0,
+                    isProcessing: loadingSuggestions,
+                  },
+                ],
+              },
+              {
+                label: 'Management',
+                items: [
+                  {
+                    id: 'reset-sessions',
+                    label: 'Reset All Sessions',
+                    description: 'Remove all processing results while keeping original images',
+                    icon: <RotateCcw className="w-5 h-5" />,
+                    onClick: () => setShowResetSessionsModal(true),
+                    disabled: managementProcessing || !statistics || statistics.session_count === 0,
+                    isProcessing: false,
+                  },
+                  {
+                    id: 'reset-students',
+                    label: 'Reset Student Assignments',
+                    description: 'Unassign all faces from students while keeping student records',
+                    icon: <RotateCcw className="w-5 h-5" />,
+                    onClick: () => setShowResetStudentsModal(true),
+                    disabled: managementProcessing || !statistics || statistics.student_count === 0,
+                    isProcessing: false,
+                  },
+                  {
+                    id: 'clear-students',
+                    label: 'Clear All Students',
+                    description: 'Delete all student records and unassign all faces',
+                    icon: <Trash2 className="w-5 h-5" />,
+                    onClick: () => setShowClearStudentsModal(true),
+                    disabled: managementProcessing || !statistics || statistics.student_count === 0,
+                    isProcessing: false,
+                  },
+                  {
+                    id: 'clear-class',
+                    label: 'Clear All Class Data',
+                    description: 'Delete all sessions, images, face crops, and students',
+                    icon: <Trash2 className="w-5 h-5" />,
+                    onClick: () => setShowClearClassModal(true),
+                    disabled: managementProcessing,
+                    isProcessing: false,
+                  },
+                ],
+              },
+            ]}
+          />
         </div>
 
         {/* Statistics */}
@@ -676,6 +801,51 @@ export const ClassDetailPage: React.FC = () => {
           isLoading={loadingSuggestions}
         />
       )}
+
+      {/* Management Confirmation Modals */}
+      <ConfirmationModal
+        isOpen={showClearClassModal}
+        onClose={() => setShowClearClassModal(false)}
+        onConfirm={handleClearClass}
+        title="Clear All Class Data?"
+        message="This will permanently delete all sessions, images, face crops, and students in this class. This action cannot be undone."
+        confirmText="Clear All Data"
+        isDestructive={true}
+        isProcessing={managementProcessing}
+      />
+
+      <ConfirmationModal
+        isOpen={showResetSessionsModal}
+        onClose={() => setShowResetSessionsModal(false)}
+        onConfirm={handleResetSessions}
+        title="Reset All Sessions?"
+        message="This will delete all face crops and reset processing status for all images in all sessions. Original images will be kept but you'll need to reprocess them. This action cannot be undone."
+        confirmText="Reset Sessions"
+        isDestructive={true}
+        isProcessing={managementProcessing}
+      />
+
+      <ConfirmationModal
+        isOpen={showClearStudentsModal}
+        onClose={() => setShowClearStudentsModal(false)}
+        onConfirm={handleClearStudents}
+        title="Clear All Students?"
+        message="This will permanently delete all student records and unassign all face crops. Manual attendance records will also be deleted. This action cannot be undone."
+        confirmText="Clear Students"
+        isDestructive={true}
+        isProcessing={managementProcessing}
+      />
+
+      <ConfirmationModal
+        isOpen={showResetStudentsModal}
+        onClose={() => setShowResetStudentsModal(false)}
+        onConfirm={handleResetStudents}
+        title="Reset Student Assignments?"
+        message="This will unassign all face crops from students and delete manual attendance records. Student records will be kept but will have no assignments. This action cannot be undone."
+        confirmText="Reset Assignments"
+        isDestructive={true}
+        isProcessing={managementProcessing}
+      />
     </div>
   );
 };

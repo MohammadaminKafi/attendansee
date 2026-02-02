@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { studentsAPI, classesAPI } from '@/services/api';
+import { studentsAPI, classesAPI, faceCropsAPI } from '@/services/api';
 import { StudentDetailReport, Class } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { ArrowLeft, CheckCircle, XCircle, User, Calendar, TrendingUp, Image as ImageIcon, Upload, Trash2, Check, Hand, RotateCcw } from 'lucide-react';
+import { ActionsMenu } from '@/components/ui/ActionsMenu';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
+import { Modal } from '@/components/ui/Modal';
+import { ArrowLeft, CheckCircle, XCircle, User, Calendar, TrendingUp, Image as ImageIcon, Upload, Trash2, Check, Hand, RotateCcw, Edit2, UserX } from 'lucide-react';
 
 const StudentDetailPage: React.FC = () => {
   const { classId, studentId } = useParams<{ classId: string; studentId: string }>();
@@ -22,6 +25,12 @@ const StudentDetailPage: React.FC = () => {
   const [settingFromCrop, setSettingFromCrop] = useState(false);
   const [hoveredCropId, setHoveredCropId] = useState<number | null>(null);
   const [togglingAttendance, setTogglingAttendance] = useState<number | null>(null);
+  const [showUnassignAllModal, setShowUnassignAllModal] = useState(false);
+  const [managementProcessing, setManagementProcessing] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editFormData, setEditFormData] = useState({ first_name: '', last_name: '', student_id: '', email: '' });
+  const [loadingManualAttendance] = useState(false);
+  const [showManualAttendanceModal, setShowManualAttendanceModal] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -191,7 +200,71 @@ const handleToggleManualAttendance = async (sessionId: number, currentIsManual: 
     }
   };
 
-  
+  const handleUnassignAllFaces = async () => {
+    if (!studentId) return;
+
+    try {
+      setManagementProcessing(true);
+      await studentsAPI.unassignAllFaces(parseInt(studentId));
+      
+      // Reload data
+      await loadData();
+      setShowUnassignAllModal(false);
+    } catch (err: any) {
+      console.error('Error unassigning all faces:', err);
+      setError(err.response?.data?.error || 'Failed to unassign all faces');
+    } finally {
+      setManagementProcessing(false);
+    }
+  };
+
+  const handleOpenEditModal = () => {
+    if (!report) return;
+    setEditFormData({
+      first_name: report.student.first_name,
+      last_name: report.student.last_name,
+      student_id: report.student.student_id || '',
+      email: report.student.email || '',
+    });
+    setShowEditModal(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!studentId) return;
+
+    try {
+      const updatedStudent = await studentsAPI.updateStudent(parseInt(studentId), editFormData);
+      
+      // Update the student data in the report
+      if (report) {
+        setReport({
+          ...report,
+          student: updatedStudent,
+        });
+      }
+      setShowEditModal(false);
+    } catch (err: any) {
+      console.error('Error updating student:', err);
+      setError(err.response?.data?.error || 'Failed to update student information');
+    }
+  };
+
+  const handleUnassignFaceCrop = async (cropId: number) => {
+    try {
+      await faceCropsAPI.unidentifyFaceCrop(cropId);
+      
+      // Reload data to refresh face crops
+      await loadData();
+    } catch (err: any) {
+      console.error('Error unassigning face crop:', err);
+      setError(err.response?.data?.error || 'Failed to unassign face crop');
+    }
+  };
+
+  const handleMarkManualAttendance = () => {
+    setShowManualAttendanceModal(true);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -200,19 +273,10 @@ const handleToggleManualAttendance = async (sessionId: number, currentIsManual: 
     );
   }
 
-  if (error || !report || !classData) {
+  if (!report || !classData) {
     return (
       <div className="p-8">
-        <div className="max-w-md mx-auto text-center">
-          <h2 className="text-2xl font-bold text-danger mb-4">Error</h2>
-          <p className="text-gray-300 mb-4">{error || 'Student not found'}</p>
-          <button
-            onClick={() => navigate(`/classes/${classId}`)}
-            className="text-primary hover:text-primary-light transition-colors"
-          >
-            ← Back to Class
-          </button>
-        </div>
+        <p className="text-danger">{error || 'Student not found'}</p>
       </div>
     );
   }
@@ -220,8 +284,9 @@ const handleToggleManualAttendance = async (sessionId: number, currentIsManual: 
   const { student, statistics, sessions } = report;
 
   const breadcrumbItems = [
-    { label: 'Classes', path: '/classes' },
-    { label: classData.name, path: `/classes/${classId}` },
+    { label: 'Classes', href: '/classes' },
+    { label: classData.name, href: `/classes/${classId}` },
+    { label: 'Students', href: `/classes/${classId}` },
     { label: student.full_name },
   ];
 
@@ -299,6 +364,46 @@ const handleToggleManualAttendance = async (sessionId: number, currentIsManual: 
               </div>
             </div>
           </div>
+          <Button onClick={handleOpenEditModal} variant="secondary">
+            <Edit2 className="w-4 h-4 mr-2" />
+            Edit Info
+          </Button>
+        </div>
+
+        {/* Actions Menu */}
+        <div className="mb-6">
+          <ActionsMenu
+            categories={[
+              {
+                label: 'Manual Actions',
+                items: [
+                  {
+                    id: 'manual-attendance',
+                    label: 'Mark Manual Attendance',
+                    description: 'Manually mark student attendance across sessions',
+                    icon: <Hand className="w-5 h-5" />,
+                    onClick: handleMarkManualAttendance,
+                    disabled: loadingManualAttendance,
+                    isProcessing: loadingManualAttendance,
+                  },
+                ],
+              },
+              {
+                label: 'Management',
+                items: [
+                  {
+                    id: 'unassign-all',
+                    label: 'Unassign All Faces',
+                    description: `Remove all face crop assignments from this student. ${statistics.total_detections} face crop(s) assigned.`,
+                    icon: <RotateCcw className="w-5 h-5" />,
+                    onClick: () => setShowUnassignAllModal(true),
+                    disabled: managementProcessing || statistics.total_detections === 0,
+                    isProcessing: false,
+                  },
+                ],
+              },
+            ]}
+          />
         </div>
 
         {/* Statistics Cards */}
@@ -463,7 +568,7 @@ const handleToggleManualAttendance = async (sessionId: number, currentIsManual: 
                           
                           {/* Set as Profile button overlay */}
                           {hoveredCropId === crop.id && (
-                            <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center">
+                            <div className="absolute inset-0 bg-black bg-opacity-60 flex flex-col items-center justify-center gap-1">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -475,6 +580,17 @@ const handleToggleManualAttendance = async (sessionId: number, currentIsManual: 
                               >
                                 <Check className="w-3 h-3" />
                                 Set as Profile
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleUnassignFaceCrop(crop.id);
+                                }}
+                                className="px-2 py-1 bg-danger/80 hover:bg-danger rounded text-white text-xs font-medium transition-colors flex items-center gap-1"
+                                title="Unassign this face crop"
+                              >
+                                <UserX className="w-3 h-3" />
+                                Unassign
                               </button>
                             </div>
                           )}
@@ -488,6 +604,178 @@ const handleToggleManualAttendance = async (sessionId: number, currentIsManual: 
           </div>
         )}
       </Card>
+
+      {/* Edit Student Modal */}
+      <Modal
+        isOpen={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        title="Edit Student Information"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              First Name
+            </label>
+            <input
+              type="text"
+              value={editFormData.first_name}
+              onChange={(e) => setEditFormData({ ...editFormData, first_name: e.target.value })}
+              className="w-full px-3 py-2 bg-dark-bg border border-dark-border rounded-lg text-white focus:outline-none focus:border-primary"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Last Name
+            </label>
+            <input
+              type="text"
+              value={editFormData.last_name}
+              onChange={(e) => setEditFormData({ ...editFormData, last_name: e.target.value })}
+              className="w-full px-3 py-2 bg-dark-bg border border-dark-border rounded-lg text-white focus:outline-none focus:border-primary"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Student ID
+            </label>
+            <input
+              type="text"
+              value={editFormData.student_id}
+              onChange={(e) => setEditFormData({ ...editFormData, student_id: e.target.value })}
+              className="w-full px-3 py-2 bg-dark-bg border border-dark-border rounded-lg text-white focus:outline-none focus:border-primary"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Email
+            </label>
+            <input
+              type="email"
+              value={editFormData.email}
+              onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+              className="w-full px-3 py-2 bg-dark-bg border border-dark-border rounded-lg text-white focus:outline-none focus:border-primary"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <Button
+              variant="secondary"
+              onClick={() => setShowEditModal(false)}
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleSaveEdit}
+              className="flex-1"
+            >
+              Save Changes
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Unassign All Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showUnassignAllModal}
+        onClose={() => setShowUnassignAllModal(false)}
+        onConfirm={handleUnassignAllFaces}
+        title="Unassign All Faces"
+        message={`Are you sure you want to unassign all ${statistics.total_detections} face crop(s) from ${student.full_name}? This will remove all assignments but keep the face crops.`}
+        confirmText="Unassign All"
+        isDestructive={false}
+        isProcessing={managementProcessing}
+      />
+
+      {/* Manual Attendance Modal */}
+      <Modal
+        isOpen={showManualAttendanceModal}
+        onClose={() => setShowManualAttendanceModal(false)}
+        title={`Manual Attendance - ${student.full_name}`}
+      >
+        <div className="space-y-4">
+          {sessions.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-400">No sessions available</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {sessions.map((session) => {
+                const isMarkedPresent = session.is_manual && session.was_present;
+                const isMarkedAbsent = session.is_manual && !session.was_present;
+                const isAuto = !session.is_manual;
+                
+                return (
+                  <div
+                    key={session.session_id}
+                    className="flex items-center justify-between p-3 bg-dark-hover rounded-lg hover:bg-dark-border transition-colors"
+                  >
+                    <div className="flex-1">
+                      <p className="text-white font-medium">{session.session_name}</p>
+                      <p className="text-sm text-gray-500">
+                        {new Date(session.date).toLocaleDateString()} 
+                        {session.start_time && ` • ${session.start_time}`}
+                      </p>
+                    </div>
+                    
+                    <div className="flex items-center gap-1 border border-dark-border rounded-lg p-1">
+                      <button
+                        onClick={() => handleToggleManualAttendance(session.session_id, session.is_manual, session.was_present)}
+                        disabled={togglingAttendance === session.session_id}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-50 ${
+                          isMarkedPresent
+                            ? 'bg-success text-white'
+                            : 'hover:bg-dark-hover text-gray-400'
+                        }`}
+                        title="Mark as Present"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleToggleManualAttendance(session.session_id, session.is_manual, session.was_present)}
+                        disabled={togglingAttendance === session.session_id}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-50 ${
+                          isMarkedAbsent
+                            ? 'bg-danger text-white'
+                            : 'hover:bg-dark-hover text-gray-400'
+                        }`}
+                        title="Mark as Absent"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleToggleManualAttendance(session.session_id, session.is_manual, session.was_present)}
+                        disabled={togglingAttendance === session.session_id || isAuto}
+                        className={`p-1.5 rounded transition-colors disabled:opacity-50 ${
+                          isAuto
+                            ? 'bg-primary text-white'
+                            : 'hover:bg-dark-hover text-gray-400'
+                        }`}
+                        title="Auto (based on face detection)"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-dark-border">
+            <Button
+              variant="secondary"
+              onClick={() => setShowManualAttendanceModal(false)}
+            >
+              Done
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };
