@@ -25,6 +25,7 @@ export interface Class {
   owner_id: number;
   name: string;
   description: string;
+  notes: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -35,12 +36,14 @@ export interface Class {
 export interface CreateClassData {
   name: string;
   description?: string;
+  notes?: string;
   is_active?: boolean;
 }
 
 export interface UpdateClassData {
   name?: string;
   description?: string;
+  notes?: string;
   is_active?: boolean;
 }
 

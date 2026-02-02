@@ -10,6 +10,7 @@ import { StatCard } from '@/components/ui/StatCard';
 import { SessionsTab } from '@/components/tabs/SessionsTab';
 import { StudentsTab } from '@/components/tabs/StudentsTab';
 import { ReportTab } from '@/components/tabs/ReportTab';
+import { NotesTab } from '@/components/tabs/NotesTab';
 import { EmbeddingGenerationModal, EmbeddingGenerationOptions, ClusteringModal, ClusteringOptions, AutoAssignModal, AutoAssignResultModal, ManualAssignModal } from '@/components/ui';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -55,6 +56,7 @@ export const ClassDetailPage: React.FC = () => {
     { id: 'sessions', label: 'Sessions', icon: '📅' },
     { id: 'students', label: 'Students', icon: '👥' },
     { id: 'report', label: 'Report', icon: '📊' },
+    { id: 'notes', label: 'Notes', icon: '📝' },
   ];
 
   useEffect(() => {
@@ -486,6 +488,9 @@ export const ClassDetailPage: React.FC = () => {
           )}
           {activeTab === 'report' && id && (
             <ReportTab classId={parseInt(id)} />
+          )}
+          {activeTab === 'notes' && id && (
+            <NotesTab classId={parseInt(id)} onUpdate={loadClassData} />
           )}
         </div>
       </div>

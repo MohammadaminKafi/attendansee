@@ -17,6 +17,11 @@ class Class(models.Model):
     )
     name = models.CharField(max_length=255, validators=[MinLengthValidator(1)])
     description = models.TextField(blank=True, default='')
+    notes = models.TextField(
+        blank=True,
+        default='',
+        help_text='Notes or additional information about the class'
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

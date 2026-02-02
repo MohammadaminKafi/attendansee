@@ -270,7 +270,7 @@ export const classesAPI = {
 // Sessions API
 export const sessionsAPI = {
   getSessions: async (classId?: number): Promise<Session[]> => {
-    const params = classId ? { class_id: classId } : {};
+    const params: any = classId ? { class_id: classId, page_size: 10000 } : { page_size: 10000 };
     const response = await api.get<PaginatedResponse<Session>>('/attendance/sessions/', { params });
     return response.data.results;
   },

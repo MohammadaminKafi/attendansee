@@ -22,7 +22,7 @@ class ClassSerializer(serializers.ModelSerializer):
     class Meta:
         model = Class
         fields = [
-            'id', 'owner', 'owner_id', 'name', 'description', 
+            'id', 'owner', 'owner_id', 'name', 'description', 'notes',
             'is_active', 'created_at', 'updated_at',
             'student_count', 'session_count'
         ]

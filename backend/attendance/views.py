@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.pagination import PageNumberPagination
 from django.db.models import Count, Q
 from django.utils import timezone
 from django.http import HttpResponse
@@ -1539,6 +1540,13 @@ class SessionViewSet(viewsets.ModelViewSet):
     """
     serializer_class = SessionSerializer
     permission_classes = [IsAuthenticated, IsClassOwnerOrAdmin]
+    
+    class SessionPagination(PageNumberPagination):
+        page_size = 20
+        page_size_query_param = 'page_size'
+        max_page_size = 10000
+    
+    pagination_class = SessionPagination
     
     def get_queryset(self):
         """
