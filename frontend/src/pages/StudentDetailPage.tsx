@@ -10,7 +10,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { ActionsMenu } from '@/components/ui/ActionsMenu';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { Modal } from '@/components/ui/Modal';
-import { ArrowLeft, CheckCircle, XCircle, User, Calendar, TrendingUp, Image as ImageIcon, Upload, Trash2, Check, Hand, RotateCcw, Edit2, UserX } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, User, Calendar, TrendingUp, Image as ImageIcon, Upload, Trash2, Check, Hand, RotateCcw, Edit2, UserX, Users } from 'lucide-react';
 
 const StudentDetailPage: React.FC = () => {
   const { classId, studentId } = useParams<{ classId: string; studentId: string }>();
@@ -385,6 +385,15 @@ const handleToggleManualAttendance = async (sessionId: number, currentIsManual: 
                     onClick: handleMarkManualAttendance,
                     disabled: loadingManualAttendance,
                     isProcessing: loadingManualAttendance,
+                  },
+                  {
+                    id: 'find-similar-faces',
+                    label: 'Find Similar Faces',
+                    description: 'Find unidentified faces similar to this student to assign, or merge with other similar students',
+                    icon: <Users className="w-5 h-5" />,
+                    onClick: () => navigate(`/classes/${classId}/students/${studentId}/similar-faces`),
+                    disabled: false,
+                    isProcessing: false,
                   },
                 ],
               },

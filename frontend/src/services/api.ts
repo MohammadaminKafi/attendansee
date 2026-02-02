@@ -32,6 +32,7 @@ import type {
   AutoAssignAllCropsData,
   AutoAssignAllCropsResponse,
   SuggestAssignmentsResponse,
+  SuggestAssignmentsEnhancedResponse,
   ManualAttendance,
   MarkAttendanceData,
   MarkStudentSessionAttendanceData,
@@ -261,6 +262,26 @@ export const classesAPI = {
   ): Promise<SuggestAssignmentsResponse> => {
     const response = await api.get<SuggestAssignmentsResponse>(
       `/attendance/classes/${classId}/suggest-assignments/`,
+      { params }
+    );
+    return response.data;
+  },
+
+  getSuggestAssignmentsEnhanced: async (
+    classId: number,
+    params?: {
+      filter?: 'all' | 'identified' | 'unidentified';
+      k_identified?: number;
+      k_unidentified?: number;
+      scope?: 'class' | 'session' | 'image';
+      search_scope?: 'class' | 'session' | 'image';
+      session_id?: number;
+      image_id?: number;
+      limit?: number;
+    }
+  ): Promise<SuggestAssignmentsEnhancedResponse> => {
+    const response = await api.get<SuggestAssignmentsEnhancedResponse>(
+      `/attendance/classes/${classId}/suggest-assignments-enhanced/`,
       { params }
     );
     return response.data;
@@ -605,6 +626,19 @@ export const studentsAPI = {
     const response = await api.post(`/attendance/students/${studentId}/unassign-all-faces/`);
     return response.data;
   },
+
+  getSimilarFaces: async (
+    studentId: number,
+    params?: {
+      k_unidentified?: number;
+      k_identified?: number;
+      include_no_embeddings?: boolean;
+      limit_no_embeddings?: number;
+    }
+  ): Promise<import('@/types').SimilarFacesResponse> => {
+    const response = await api.get(`/attendance/students/${studentId}/similar-faces/`, { params });
+    return response.data;
+  },
 };
 
 // Images API
@@ -772,10 +806,35 @@ export const faceCropsAPI = {
     return response.data;
   },
 
+  assignToStudent: async (
+    id: number,
+    studentId: number,
+    confidence?: number
+  ): Promise<{
+    success: boolean;
+    crop_id: number;
+    student_id: number;
+    student_name: string;
+    confidence?: number;
+    message: string;
+  }> => {
+    const response = await api.post(`/attendance/face-crops/${id}/assign-to-student/`, {
+      student_id: studentId,
+      confidence,
+    });
+    return response.data;
+  },
+
   createAndAssignStudent: async (
     id: number,
     classId: number,
-    confidence?: number
+    options?: {
+      confidence?: number;
+      first_name?: string;
+      last_name?: string;
+      student_id?: string;
+      email?: string;
+    }
   ): Promise<{
     status: string;
     crop_id: number;
@@ -788,7 +847,7 @@ export const faceCropsAPI = {
   }> => {
     const response = await api.post(`/attendance/face-crops/${id}/create-and-assign-student/`, {
       class_id: classId,
-      confidence,
+      ...options,
     });
     return response.data;
   },

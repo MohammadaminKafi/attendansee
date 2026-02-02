@@ -10,6 +10,8 @@ import SessionDetailPage from '@/pages/SessionDetailPage';
 import ImageDetailPage from '@/pages/ImageDetailPage';
 import StudentDetailPage from '@/pages/StudentDetailPage';
 import FaceCropDetailPage from '@/pages/FaceCropDetailPage';
+import ManualAssignmentPage from '@/pages/ManualAssignmentPage';
+import StudentSimilarFacesPage from '@/pages/StudentSimilarFacesPage';
 
 const App: React.FC = () => {
   return (
@@ -30,9 +32,11 @@ const App: React.FC = () => {
             <Route path="/classes" element={<ClassesPage />} />
             <Route path="/classes/:id" element={<ClassDetailPage />} />
             <Route path="/classes/:classId/students/:studentId" element={<StudentDetailPage />} />
+            <Route path="/classes/:classId/students/:studentId/similar-faces" element={<StudentSimilarFacesPage />} />
             <Route path="/classes/:classId/sessions/:sessionId" element={<SessionDetailPage />} />
             <Route path="/classes/:classId/sessions/:sessionId/images/:imageId" element={<ImageDetailPage />} />
             <Route path="/classes/:classId/sessions/:sessionId/images/:imageId/crops/:cropId" element={<FaceCropDetailPage />} />
+            <Route path="/classes/:classId/manual-assignment" element={<ManualAssignmentPage />} />
             <Route path="/" element={<Navigate to="/classes" replace />} />
           </Route>
 

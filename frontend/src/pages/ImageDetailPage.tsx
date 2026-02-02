@@ -194,9 +194,10 @@ const ImageDetailPage: React.FC = () => {
     console.log('Auto assign not yet implemented');
   };
 
-  const handleOpenManualAssign = async () => {
-    // Placeholder - similar to session page implementation
-    console.log('Manual assign not yet implemented');
+  const handleOpenManualAssign = () => {
+    if (!classId || !imageId) return;
+    // Navigate to the manual assignment page with image scope
+    navigate(`/classes/${classId}/manual-assignment?image_id=${imageId}&scope=image`);
   };
 
   const handleMarkManualAttendance = async () => {

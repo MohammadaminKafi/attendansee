@@ -1002,6 +1002,152 @@ class ClassViewSet(viewsets.ModelViewSet):
             'sessions_covered': len(sessions_covered),
             'suggestions': suggestions
         })
+
+    @action(detail=True, methods=['get'], url_path='suggest-assignments-enhanced')
+    def suggest_assignments_enhanced(self, request, pk=None):
+        """
+        Get enhanced suggestions for manual face assignment workflow.
+        Returns separated identified and unidentified similar faces for each crop.
+        
+        Query params:
+        - filter: 'all', 'identified', or 'unidentified' (default: 'unidentified')
+        - k_identified: Number of identified similar faces per crop (default: 5)
+        - k_unidentified: Number of unidentified similar faces per crop (default: 5)
+        - scope: 'class', 'session', or 'image' - which crops to work on (default: based on session_id/image_id or 'class')
+        - search_scope: 'class', 'session', or 'image' - where to search for similar faces (default: 'class')
+        - session_id: Filter crops to a specific session (optional)
+        - image_id: Filter crops to a specific image (optional)
+        - limit: Maximum number of crops to return (default: 100)
+        
+        Returns:
+        - List of crops with separated identified/unidentified similar faces
+        """
+        from attendance.services import AssignmentService
+        
+        class_obj = self.get_object()
+        
+        # Parse parameters
+        crop_filter = request.query_params.get('filter', 'unidentified')
+        k_identified = int(request.query_params.get('k_identified', 5))
+        k_unidentified = int(request.query_params.get('k_unidentified', 5))
+        scope = request.query_params.get('scope')  # Which crops to show
+        search_scope = request.query_params.get('search_scope', 'class')  # Where to search for similar faces
+        session_id = request.query_params.get('session_id')
+        image_id = request.query_params.get('image_id')
+        limit = int(request.query_params.get('limit', 100))
+        
+        # Determine crop source scope from session_id/image_id if not explicitly set
+        if scope is None:
+            if image_id:
+                scope = 'image'
+            elif session_id:
+                scope = 'session'
+            else:
+                scope = 'class'
+        
+        # Validate parameters
+        if k_identified < 0 or k_identified > 50:
+            return Response({'error': 'k_identified must be between 0 and 50'}, status=status.HTTP_400_BAD_REQUEST)
+        if k_unidentified < 0 or k_unidentified > 50:
+            return Response({'error': 'k_unidentified must be between 0 and 50'}, status=status.HTTP_400_BAD_REQUEST)
+        if scope not in ['class', 'session', 'image']:
+            return Response({'error': 'scope must be class, session, or image'}, status=status.HTTP_400_BAD_REQUEST)
+        if search_scope not in ['class', 'session', 'image']:
+            return Response({'error': 'search_scope must be class, session, or image'}, status=status.HTTP_400_BAD_REQUEST)
+        if crop_filter not in ['all', 'identified', 'unidentified']:
+            return Response({'error': 'filter must be all, identified, or unidentified'}, status=status.HTTP_400_BAD_REQUEST)
+        if limit < 1 or limit > 1000:
+            return Response({'error': 'limit must be between 1 and 1000'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Build base queryset for CROPS TO DISPLAY (source scope)
+        crops_qs = FaceCrop.objects.filter(
+            image__session__class_session=class_obj,
+            embedding__isnull=False
+        ).select_related('image__session', 'student')
+        
+        # Apply session/image filter for CROPS TO DISPLAY
+        # This determines WHICH crops to show for assignment, based on scope parameter
+        if scope == 'image' and image_id:
+            try:
+                crops_qs = crops_qs.filter(image_id=int(image_id))
+            except ValueError:
+                return Response({'error': 'image_id must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+        elif scope == 'session' and session_id:
+            try:
+                crops_qs = crops_qs.filter(image__session_id=int(session_id))
+            except ValueError:
+                return Response({'error': 'session_id must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+        # scope == 'class' means no additional filter - show all crops in class
+        
+        # Apply identification filter
+        if crop_filter == 'identified':
+            crops_qs = crops_qs.filter(is_identified=True)
+        elif crop_filter == 'unidentified':
+            crops_qs = crops_qs.filter(is_identified=False)
+        # 'all' means no filter
+        total_count = crops_qs.count()
+        crops_qs = crops_qs[:limit]
+        
+        if not crops_qs.exists():
+            return Response({
+                'class_id': class_obj.id,
+                'class_name': class_obj.name,
+                'filter': crop_filter,
+                'scope': scope,
+                'total_crops': 0,
+                'returned_count': 0,
+                'suggestions': []
+            })
+        
+        # Build suggestions with separated similar faces
+        suggestions = []
+        
+        for crop in crops_qs:
+            similar = AssignmentService.find_similar_crops_separated(
+                crop=crop,
+                k_identified=k_identified,
+                k_unidentified=k_unidentified,
+                scope=search_scope,  # Use search_scope for finding similar faces
+            )
+            
+            # Convert paths to absolute URLs
+            for face_list in [similar['identified'], similar['unidentified']]:
+                for sf in face_list:
+                    if sf.get('crop_image_path'):
+                        try:
+                            neighbor_crop = FaceCrop.objects.get(id=sf['crop_id'])
+                            if neighbor_crop.crop_image_path:
+                                sf['crop_image_path'] = request.build_absolute_uri(neighbor_crop.crop_image_path.url)
+                            else:
+                                sf['crop_image_path'] = None
+                        except FaceCrop.DoesNotExist:
+                            sf['crop_image_path'] = None
+            
+            suggestions.append({
+                'crop_id': crop.id,
+                'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None,
+                'image_id': crop.image.id,
+                'session_id': crop.image.session.id,
+                'session_name': crop.image.session.name,
+                'is_identified': crop.is_identified,
+                'student_id': crop.student_id,
+                'student_name': crop.student.full_name if crop.student else None,
+                'similar_identified': similar['identified'],
+                'similar_unidentified': similar['unidentified'],
+            })
+        
+        return Response({
+            'class_id': class_obj.id,
+            'class_name': class_obj.name,
+            'filter': crop_filter,
+            'scope': scope,
+            'search_scope': search_scope,
+            'k_identified': k_identified,
+            'k_unidentified': k_unidentified,
+            'total_crops': total_count,
+            'returned_count': len(suggestions),
+            'suggestions': suggestions
+        })
     
     @action(detail=True, methods=['post'], url_path='clear-class')
     def clear_class(self, request, pk=None):
@@ -1736,6 +1882,265 @@ class StudentViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=['get'], url_path='similar-faces')
+    def similar_faces(self, request, pk=None):
+        """
+        Get faces similar to this student's assigned face crops.
+        
+        This endpoint finds:
+        1. Unidentified faces similar to the student (can be assigned to this student)
+        2. Identified faces assigned to other students that are similar (for merging)
+        3. Face crops without embeddings (for manual review)
+        
+        Query params:
+        - k_unidentified: Number of similar unidentified faces per student crop (default: 10)
+        - k_identified: Number of similar identified faces per student crop (default: 10)
+        - include_no_embeddings: Include face crops without embeddings (default: true)
+        - limit_no_embeddings: Max number of unembedded crops to return (default: 50)
+        
+        Returns:
+        - student: Basic student info
+        - student_crops: List of this student's face crops used for similarity search
+        - similar_unidentified: Unidentified faces similar to this student (for assignment)
+        - similar_identified: Identified faces from other students (for merging)
+        - no_embedding_crops: Face crops without embeddings (for manual assignment)
+        """
+        from attendance.services import AssignmentService
+        from pgvector.django import CosineDistance
+        from collections import defaultdict
+        import numpy as np
+        
+        student = self.get_object()
+        class_id = student.class_enrolled_id
+        
+        # Parse parameters
+        k_unidentified = int(request.query_params.get('k_unidentified', 10))
+        k_identified = int(request.query_params.get('k_identified', 10))
+        include_no_embeddings = request.query_params.get('include_no_embeddings', 'true').lower() == 'true'
+        limit_no_embeddings = int(request.query_params.get('limit_no_embeddings', 50))
+        
+        # Validate parameters
+        if k_unidentified < 0 or k_unidentified > 100:
+            return Response({'error': 'k_unidentified must be between 0 and 100'}, status=status.HTTP_400_BAD_REQUEST)
+        if k_identified < 0 or k_identified > 100:
+            return Response({'error': 'k_identified must be between 0 and 100'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get this student's face crops with embeddings
+        student_crops = FaceCrop.objects.filter(
+            student=student,
+            is_identified=True,
+            embedding__isnull=False
+        ).select_related('image__session')
+        
+        if not student_crops.exists():
+            # No face crops with embeddings for this student
+            # Return only unembedded crops if requested
+            no_embedding_crops = []
+            if include_no_embeddings:
+                no_embedding_qs = FaceCrop.objects.filter(
+                    image__session__class_session_id=class_id,
+                    embedding__isnull=True
+                ).select_related('image__session', 'student')[:limit_no_embeddings]
+                
+                for crop in no_embedding_qs:
+                    no_embedding_crops.append({
+                        'crop_id': crop.id,
+                        'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None,
+                        'image_id': crop.image_id,
+                        'session_id': crop.image.session_id,
+                        'session_name': crop.image.session.name,
+                        'is_identified': crop.is_identified,
+                        'student_id': crop.student_id,
+                        'student_name': crop.student.full_name if crop.student else None,
+                    })
+            
+            return Response({
+                'student': {
+                    'id': student.id,
+                    'full_name': student.full_name,
+                    'student_id': student.student_id,
+                    'profile_picture': request.build_absolute_uri(student.profile_picture.url) if student.profile_picture else None,
+                },
+                'student_crops': [],
+                'similar_unidentified': [],
+                'similar_identified': [],
+                'no_embedding_crops': no_embedding_crops,
+                'message': 'This student has no face crops with embeddings. Cannot find similar faces.'
+            })
+        
+        # Build student crops list for response
+        student_crops_data = []
+        for crop in student_crops:
+            student_crops_data.append({
+                'crop_id': crop.id,
+                'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None,
+                'image_id': crop.image_id,
+                'session_id': crop.image.session_id,
+                'session_name': crop.image.session.name,
+                'confidence_score': crop.confidence_score,
+            })
+        
+        # Aggregate embeddings from student's crops
+        # We'll use each student crop to find similar faces, then deduplicate
+        all_similar_unidentified = {}  # crop_id -> best match data
+        all_similar_identified = {}    # crop_id -> best match data
+        
+        for student_crop in student_crops:
+            if student_crop.embedding is None:
+                continue
+            
+            # Find similar unidentified faces (not assigned to any student)
+            if k_unidentified > 0:
+                unidentified_qs = FaceCrop.objects.filter(
+                    image__session__class_session_id=class_id,
+                    embedding__isnull=False,
+                    is_identified=False,
+                    student__isnull=True
+                ).exclude(id=student_crop.id).select_related('image__session')
+                
+                try:
+                    annotated = unidentified_qs.annotate(
+                        distance=CosineDistance('embedding', student_crop.embedding)
+                    ).order_by('distance')[:k_unidentified]
+                    
+                    for n in annotated:
+                        dist = getattr(n, 'distance', None)
+                        sim = 1.0 - float(dist) if dist is not None else 0.0
+                        sim = max(0.0, min(1.0, sim))
+                        
+                        # Keep the best similarity score for each crop
+                        if n.id not in all_similar_unidentified or sim > all_similar_unidentified[n.id]['similarity']:
+                            all_similar_unidentified[n.id] = {
+                                'crop_id': n.id,
+                                'crop_image_path': request.build_absolute_uri(n.crop_image_path.url) if n.crop_image_path else None,
+                                'image_id': n.image_id,
+                                'session_id': n.image.session_id,
+                                'session_name': n.image.session.name,
+                                'similarity': sim,
+                                'matched_with_student_crop_id': student_crop.id,
+                            }
+                except Exception:
+                    pass
+            
+            # Find similar identified faces (assigned to OTHER students)
+            if k_identified > 0:
+                identified_qs = FaceCrop.objects.filter(
+                    image__session__class_session_id=class_id,
+                    embedding__isnull=False,
+                    is_identified=True,
+                    student__isnull=False
+                ).exclude(
+                    student=student  # Exclude this student's own crops
+                ).exclude(id=student_crop.id).select_related('image__session', 'student')
+                
+                try:
+                    annotated = identified_qs.annotate(
+                        distance=CosineDistance('embedding', student_crop.embedding)
+                    ).order_by('distance')[:k_identified]
+                    
+                    for n in annotated:
+                        dist = getattr(n, 'distance', None)
+                        sim = 1.0 - float(dist) if dist is not None else 0.0
+                        sim = max(0.0, min(1.0, sim))
+                        
+                        # Keep the best similarity score for each crop
+                        if n.id not in all_similar_identified or sim > all_similar_identified[n.id]['similarity']:
+                            all_similar_identified[n.id] = {
+                                'crop_id': n.id,
+                                'crop_image_path': request.build_absolute_uri(n.crop_image_path.url) if n.crop_image_path else None,
+                                'image_id': n.image_id,
+                                'session_id': n.image.session_id,
+                                'session_name': n.image.session.name,
+                                'similarity': sim,
+                                'student_id': n.student_id,
+                                'student_name': n.student.full_name if n.student else None,
+                                'matched_with_student_crop_id': student_crop.id,
+                            }
+                except Exception:
+                    pass
+        
+        # Sort by similarity (descending)
+        similar_unidentified = sorted(
+            all_similar_unidentified.values(),
+            key=lambda x: x['similarity'],
+            reverse=True
+        )
+        similar_identified = sorted(
+            all_similar_identified.values(),
+            key=lambda x: x['similarity'],
+            reverse=True
+        )
+        
+        # Group identified crops by student for better UX
+        students_to_merge = defaultdict(list)
+        for crop in similar_identified:
+            if crop['student_id']:
+                students_to_merge[crop['student_id']].append(crop)
+        
+        # Build student merge suggestions
+        merge_suggestions = []
+        for other_student_id, crops in students_to_merge.items():
+            try:
+                other_student = Student.objects.get(id=other_student_id)
+                avg_similarity = sum(c['similarity'] for c in crops) / len(crops)
+                max_similarity = max(c['similarity'] for c in crops)
+                merge_suggestions.append({
+                    'student_id': other_student.id,
+                    'student_name': other_student.full_name,
+                    'student_number': other_student.student_id,
+                    'profile_picture': request.build_absolute_uri(other_student.profile_picture.url) if other_student.profile_picture else None,
+                    'matching_crops_count': len(crops),
+                    'avg_similarity': round(avg_similarity, 4),
+                    'max_similarity': round(max_similarity, 4),
+                    'matching_crops': crops[:5],  # Limit to 5 examples per student
+                })
+            except Student.DoesNotExist:
+                continue
+        
+        # Sort merge suggestions by max similarity
+        merge_suggestions.sort(key=lambda x: x['max_similarity'], reverse=True)
+        
+        # Get face crops without embeddings
+        no_embedding_crops = []
+        if include_no_embeddings:
+            no_embedding_qs = FaceCrop.objects.filter(
+                image__session__class_session_id=class_id,
+                embedding__isnull=True
+            ).select_related('image__session', 'student')[:limit_no_embeddings]
+            
+            for crop in no_embedding_qs:
+                no_embedding_crops.append({
+                    'crop_id': crop.id,
+                    'crop_image_path': request.build_absolute_uri(crop.crop_image_path.url) if crop.crop_image_path else None,
+                    'image_id': crop.image_id,
+                    'session_id': crop.image.session_id,
+                    'session_name': crop.image.session.name,
+                    'is_identified': crop.is_identified,
+                    'student_id': crop.student_id,
+                    'student_name': crop.student.full_name if crop.student else None,
+                })
+        
+        return Response({
+            'student': {
+                'id': student.id,
+                'full_name': student.full_name,
+                'student_id': student.student_id,
+                'profile_picture': request.build_absolute_uri(student.profile_picture.url) if student.profile_picture else None,
+            },
+            'student_crops': student_crops_data,
+            'similar_unidentified': similar_unidentified,
+            'similar_identified': similar_identified,
+            'merge_suggestions': merge_suggestions,
+            'no_embedding_crops': no_embedding_crops,
+            'stats': {
+                'student_crops_count': len(student_crops_data),
+                'similar_unidentified_count': len(similar_unidentified),
+                'similar_identified_count': len(similar_identified),
+                'merge_candidates_count': len(merge_suggestions),
+                'no_embedding_count': len(no_embedding_crops),
+            }
+        })
 
 
 class SessionViewSet(viewsets.ModelViewSet):
@@ -3261,18 +3666,60 @@ class FaceCropViewSet(viewsets.ModelViewSet):
             'message': result.get('message'),
         })
 
+    @action(detail=True, methods=['post'], url_path='assign-to-student')
+    def assign_to_student(self, request, pk=None):
+        """
+        Assign this face crop directly to an existing student.
+        
+        Body params:
+        - student_id (int, required): The student to assign the face crop to
+        - confidence (float, optional): confidence score to store
+        """
+        face_crop = self.get_object()
+        student_id = request.data.get('student_id')
+        confidence = request.data.get('confidence')
+        
+        if not student_id:
+            return Response({'error': 'student_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response({'error': f'Student with id {student_id} not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Assign the face crop to the student
+        confidence_val = float(confidence) if confidence else 1.0
+        face_crop.identify_student(student, confidence_val)
+        
+        return Response({
+            'success': True,
+            'crop_id': face_crop.id,
+            'student_id': student.id,
+            'student_name': student.full_name,
+            'confidence': confidence_val,
+            'message': f'Assigned face crop to "{student.full_name}"',
+        })
+
     @action(detail=True, methods=['post'], url_path='create-and-assign-student')
     def create_and_assign_student(self, request, pk=None):
         """
-        Create a new student with a default name and assign this face crop to them.
+        Create a new student and assign this face crop to them.
         
         Body params:
         - class_id (int, required): The class to create the student in
         - confidence (float, optional): confidence score to store
+        - first_name (str, optional): First name for the student (default: auto-generated)
+        - last_name (str, optional): Last name for the student (default: auto-generated)
+        - student_id (str, optional): Student ID number
+        - email (str, optional): Student email
         """
         face_crop = self.get_object()
         class_id = request.data.get('class_id')
         confidence = request.data.get('confidence')
+        first_name_input = request.data.get('first_name', '').strip()
+        last_name_input = request.data.get('last_name', '').strip()
+        student_id_input = request.data.get('student_id', '').strip()
+        email_input = request.data.get('email', '').strip()
         
         if not class_id:
             return Response({'error': 'class_id is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -3300,17 +3747,21 @@ class FaceCropViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Generate a unique default name for the student
-        # Find the next available number
         existing_students = Student.objects.filter(class_enrolled=class_obj)
-        counter = 1
-        while True:
-            first_name = f"Student"
-            last_name = f"#{counter}"
-            # Check if this name already exists
-            if not existing_students.filter(first_name=first_name, last_name=last_name).exists():
-                break
-            counter += 1
+        
+        # Use provided names or generate default
+        if first_name_input and last_name_input:
+            first_name = first_name_input
+            last_name = last_name_input
+        else:
+            # Generate a unique default name for the student
+            counter = 1
+            while True:
+                first_name = f"Student"
+                last_name = f"#{counter}"
+                if not existing_students.filter(first_name=first_name, last_name=last_name).exists():
+                    break
+                counter += 1
         
         # Create the student
         try:
@@ -3318,8 +3769,8 @@ class FaceCropViewSet(viewsets.ModelViewSet):
                 class_enrolled=class_obj,
                 first_name=first_name,
                 last_name=last_name,
-                student_id='',
-                email=''
+                student_id=student_id_input,
+                email=email_input
             )
         except Exception as e:
             return Response({'error': f'Failed to create student: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
