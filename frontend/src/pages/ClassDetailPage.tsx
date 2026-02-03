@@ -11,7 +11,7 @@ import { SessionsTab } from '@/components/tabs/SessionsTab';
 import { StudentsTab } from '@/components/tabs/StudentsTab';
 import { ReportTab } from '@/components/tabs/ReportTab';
 import { NotesTab } from '@/components/tabs/NotesTab';
-import { EmbeddingGenerationModal, EmbeddingGenerationOptions, ClusteringModal, ClusteringOptions, AutoAssignModal, AutoAssignResultModal, ManualAssignModal, ActionsMenu, ConfirmationModal } from '@/components/ui';
+import { EmbeddingGenerationModal, EmbeddingGenerationOptions, ClusteringModal, ClusteringOptions, AutoAssignModal, AutoAssignResultModal, ActionsMenu, ConfirmationModal } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
 import { ArrowLeft, Layers, Sparkles, Users, Wand2, UserCheck, Trash2, RotateCcw } from 'lucide-react';
 
@@ -44,12 +44,6 @@ export const ClassDetailPage: React.FC = () => {
   const [autoAssigning, setAutoAssigning] = useState(false);
   const [autoAssignResult, setAutoAssignResult] = useState<any>(null);
   const [showAutoAssignResultModal, setShowAutoAssignResultModal] = useState(false);
-
-  // Manual assignment states
-  const [showManualAssignModal, setShowManualAssignModal] = useState(false);
-  const [manualAssignSuggestions, setManualAssignSuggestions] = useState<any[]>([]);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const [similarFacesCount, setSimilarFacesCount] = useState<number>(5);
 
   // Management action states
   const [showClearClassModal, setShowClearClassModal] = useState(false);
@@ -243,58 +237,10 @@ export const ClassDetailPage: React.FC = () => {
     }
   };
 
-  const handleOpenManualAssign = async () => {
+  const handleOpenManualAssign = () => {
     if (!id) return;
-
-    try {
-      setLoadingSuggestions(true);
-      setError('');
-
-      const result = await classesAPI.getSuggestAssignments(parseInt(id), {
-        k: similarFacesCount,
-        include_unidentified: true,
-        limit: 100
-      });
-
-      if (result.suggestions && result.suggestions.length > 0) {
-        setManualAssignSuggestions(result.suggestions);
-        setShowManualAssignModal(true);
-      } else {
-        setError('No unidentified crops found to assign');
-      }
-    } catch (err: any) {
-      console.error('Error loading suggestions:', err);
-      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to load suggestions';
-      setError(errorMsg);
-    } finally {
-      setLoadingSuggestions(false);
-    }
-  };
-
-  const handleManualAssignUpdate = () => {
-    // Reload data after manual assignment
-    loadClassData();
-  };
-
-  const handleChangeSimilarFacesCount = async (newCount: number) => {
-    setSimilarFacesCount(newCount);
-    if (showManualAssignModal && id) {
-      try {
-        setLoadingSuggestions(true);
-        const result = await classesAPI.getSuggestAssignments(parseInt(id), {
-          k: newCount,
-          include_unidentified: true,
-          limit: 100
-        });
-        if (result.suggestions && result.suggestions.length > 0) {
-          setManualAssignSuggestions(result.suggestions);
-        }
-      } catch (err: any) {
-        console.error('Error reloading suggestions:', err);
-      } finally {
-        setLoadingSuggestions(false);
-      }
-    }
+    // Navigate to the new manual assignment page
+    navigate(`/classes/${id}/manual-assignment`);
   };
 
   // Management action handlers
@@ -520,8 +466,8 @@ export const ClassDetailPage: React.FC = () => {
                     description: 'Manually review and assign unidentified faces to students',
                     icon: <UserCheck className="w-5 h-5" />,
                     onClick: handleOpenManualAssign,
-                    disabled: loadingSuggestions || !statistics || statistics.total_face_crops === 0,
-                    isProcessing: loadingSuggestions,
+                    disabled: !statistics || statistics.total_face_crops === 0,
+                    isProcessing: false,
                   },
                 ],
               },
@@ -785,20 +731,6 @@ export const ClassDetailPage: React.FC = () => {
             setAutoAssignResult(null);
           }}
           result={autoAssignResult}
-        />
-      )}
-
-      {/* Manual Assignment Modal */}
-      {id && (
-        <ManualAssignModal
-          isOpen={showManualAssignModal}
-          onClose={() => setShowManualAssignModal(false)}
-          suggestions={manualAssignSuggestions}
-          onUpdate={handleManualAssignUpdate}
-          classId={parseInt(id)}
-          similarFacesCount={similarFacesCount}
-          onChangeSimilarFacesCount={handleChangeSimilarFacesCount}
-          isLoading={loadingSuggestions}
         />
       )}
 

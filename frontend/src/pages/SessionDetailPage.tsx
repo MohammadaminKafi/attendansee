@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { sessionsAPI, imagesAPI, classesAPI, studentsAPI, faceCropsAPI } from '@/services/api';
-import { Session, Image, Class, FaceCropDetail, Student, AutoAssignAllCropsResponse, SuggestAssignmentsResponse, ManualAttendance } from '@/types';
+import { Session, Image, Class, FaceCropDetail, Student, AutoAssignAllCropsResponse, ManualAttendance } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -17,11 +17,10 @@ import {
   AutoAssignModal,
   AutoAssignOptions,
   AutoAssignResultModal,
-  ManualAssignModal,
   ActionsMenu,
   ConfirmationModal,
 } from '@/components/ui';
-import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users, UserCog, Hand, RotateCcw, Wand2 } from 'lucide-react';
+import { Upload, Trash2, Clock, CheckCircle, XCircle, ArrowLeft, Play, Layers, Sparkles, Users, UserCog, Hand, RotateCcw, Wand2, User } from 'lucide-react';
 
 const SessionDetailPage: React.FC = () => {
   const { classId, sessionId } = useParams<{ classId: string; sessionId: string }>();
@@ -61,12 +60,6 @@ const SessionDetailPage: React.FC = () => {
   const [autoAssignInProgress, setAutoAssignInProgress] = useState(false);
   const [autoAssignResult, setAutoAssignResult] = useState<AutoAssignAllCropsResponse | null>(null);
   const [showAutoAssignResultModal, setShowAutoAssignResultModal] = useState(false);
-
-  // Manual assign states
-  const [showManualAssignModal, setShowManualAssignModal] = useState(false);
-  const [manualAssignSuggestions, setManualAssignSuggestions] = useState<SuggestAssignmentsResponse | null>(null);
-  const [loadingManualSuggestions, setLoadingManualSuggestions] = useState(false);
-  const [similarFacesCount, setSimilarFacesCount] = useState<number>(5);
 
   // Manual attendance states
   const [showManualAttendanceModal, setShowManualAttendanceModal] = useState(false);
@@ -467,59 +460,10 @@ const SessionDetailPage: React.FC = () => {
     }
   };
 
-  const handleOpenManualAssign = async () => {
-    if (!sessionId) return;
-
-    try {
-      setLoadingManualSuggestions(true);
-      setError(null);
-
-      const result = await sessionsAPI.getSuggestAssignments(parseInt(sessionId), {
-        k: similarFacesCount,
-        include_unidentified: true,
-      });
-
-      if (result.suggestions.length === 0) {
-        setError('No unidentified crops with embeddings found to assign');
-        return;
-      }
-
-      setManualAssignSuggestions(result);
-      setShowManualAssignModal(true);
-    } catch (err: any) {
-      console.error('Error loading assignment suggestions:', err);
-      const errorMsg = err.response?.data?.error || err.response?.data?.message || 'Failed to load suggestions';
-      setError(errorMsg);
-    } finally {
-      setLoadingManualSuggestions(false);
-    }
-  };
-
-  const handleManualAssignUpdate = async () => {
-    // Reload face crops after manual assignment
-    await handleFaceCropsUpdate();
-    if (sessionId) {
-      const updatedSession = await sessionsAPI.getSession(parseInt(sessionId));
-      setSession(updatedSession);
-    }
-  };
-
-  const handleChangeSimilarFacesCount = async (newCount: number) => {
-    setSimilarFacesCount(newCount);
-    if (showManualAssignModal && sessionId) {
-      try {
-        setLoadingManualSuggestions(true);
-        const result = await sessionsAPI.getSuggestAssignments(parseInt(sessionId), {
-          k: newCount,
-          include_unidentified: true,
-        });
-        setManualAssignSuggestions(result);
-      } catch (err: any) {
-        console.error('Error reloading suggestions:', err);
-      } finally {
-        setLoadingManualSuggestions(false);
-      }
-    }
+  const handleOpenManualAssign = () => {
+    if (!classId || !sessionId) return;
+    // Navigate to the new manual assignment page with session context
+    navigate(`/classes/${classId}/manual-assignment?session_id=${sessionId}&scope=session`);
   };
 
   // Management action handlers
@@ -718,8 +662,8 @@ const SessionDetailPage: React.FC = () => {
                   description: 'Manually review and assign unidentified faces to students',
                   icon: <UserCog className="w-5 h-5" />,
                   onClick: handleOpenManualAssign,
-                  disabled: loadingManualSuggestions || faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0,
-                  isProcessing: loadingManualSuggestions,
+                  disabled: faceCrops.filter(c => !c.is_identified && c.embedding_model).length === 0,
+                  isProcessing: false,
                 },
                 {
                   id: 'manual-attendance',
@@ -1092,23 +1036,6 @@ const SessionDetailPage: React.FC = () => {
         />
       )}
 
-      {/* Manual Assignment Modal */}
-      {manualAssignSuggestions && classId && (
-        <ManualAssignModal
-          isOpen={showManualAssignModal}
-          onClose={() => {
-            setShowManualAssignModal(false);
-            setManualAssignSuggestions(null);
-          }}
-          suggestions={manualAssignSuggestions.suggestions}
-          onUpdate={handleManualAssignUpdate}
-          classId={parseInt(classId)}
-          similarFacesCount={similarFacesCount}
-          onChangeSimilarFacesCount={handleChangeSimilarFacesCount}
-          isLoading={loadingManualSuggestions}
-        />
-      )}
-
       {/* Delete Image Modal */}
       <Modal
         isOpen={showDeleteImageModal}
@@ -1171,11 +1098,27 @@ const SessionDetailPage: React.FC = () => {
                     key={student.id}
                     className="flex items-center justify-between p-3 bg-dark-hover rounded-lg hover:bg-dark-border transition-colors"
                   >
-                    <div>
-                      <p className="text-white font-medium">{student.full_name}</p>
-                      {student.student_id && (
-                        <p className="text-sm text-gray-500">{student.student_id}</p>
-                      )}
+                    <div className="flex items-center gap-3">
+                      {/* Profile Picture */}
+                      <div className="w-10 h-10 rounded-full overflow-hidden bg-dark-bg border border-dark-border flex-shrink-0">
+                        {student.profile_picture ? (
+                          <img
+                            src={student.profile_picture}
+                            alt={student.full_name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-gray-500">
+                            <User className="w-5 h-5" />
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-white font-medium">{student.full_name}</p>
+                        {student.student_id && (
+                          <p className="text-sm text-gray-500">{student.student_id}</p>
+                        )}
+                      </div>
                     </div>
                     
                     <div className="flex items-center gap-1 border border-dark-border rounded-lg p-1">

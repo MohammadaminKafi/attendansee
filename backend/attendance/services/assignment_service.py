@@ -229,3 +229,111 @@ class AssignmentService:
 			'student_name': candidate.student.full_name,
 			'confidence': confidence,
 		}
+
+	@staticmethod
+	def find_similar_crops_separated(
+		crop: FaceCrop,
+		k_identified: int = 5,
+		k_unidentified: int = 5,
+		embedding_model: Optional[str] = None,
+		scope: str = 'class',  # 'class', 'session', or 'image'
+	) -> Dict[str, List[Dict]]:
+		"""
+		Find top-k similar face crops separated into identified and unidentified groups.
+		
+		Returns a dict with:
+		- identified: List of similar crops that are assigned to students
+		- unidentified: List of similar crops that are not assigned to any student
+		"""
+		if crop.embedding is None:
+			return {'identified': [], 'unidentified': []}
+
+		# Determine scope filter
+		class_id = crop.image.session.class_session_id
+		
+		qs: QuerySet[FaceCrop] = FaceCrop.objects.filter(
+			embedding__isnull=False,
+		).exclude(id=crop.id)
+		
+		if scope == 'image':
+			qs = qs.filter(image_id=crop.image_id)
+		elif scope == 'session':
+			qs = qs.filter(image__session_id=crop.image.session_id)
+		else:  # default to class
+			qs = qs.filter(image__session__class_session_id=class_id)
+
+		# Filter by embedding model
+		model_name = embedding_model or crop.embedding_model
+		if model_name:
+			qs = qs.filter(embedding_model=model_name)
+
+		# Get identified and unidentified separately
+		identified_qs = qs.filter(student__isnull=False)
+		unidentified_qs = qs.filter(student__isnull=True)
+
+		def get_similar_from_qs(queryset: QuerySet, k: int) -> List[Dict]:
+			if k <= 0:
+				return []
+			try:
+				annotated = queryset.annotate(
+					distance=CosineDistance('embedding', crop.embedding)
+				).order_by('distance')[:k]
+				
+				results = []
+				for n in annotated:
+					dist = getattr(n, 'distance', None)
+					sim = 1.0 - float(dist) if dist is not None else 0.0
+					sim = max(0.0, min(1.0, sim))
+					results.append({
+						'crop_id': n.id,
+						'student_id': n.student_id,
+						'student_name': n.student.full_name if n.student_id else None,
+						'similarity': sim,
+						'distance': float(dist) if dist is not None else None,
+						'crop_image_path': str(n.crop_image_path) if n.crop_image_path else '',
+						'is_identified': bool(n.student_id is not None),
+						'image_id': n.image_id,
+						'session_id': n.image.session_id,
+						'session_name': n.image.session.name,
+					})
+				return results
+			except Exception:
+				# Fallback: compute similarity manually
+				candidates = list(queryset.values(
+					'id', 'student_id', 'crop_image_path', 'embedding', 
+					'image_id', 'image__session_id', 'image__session__name'
+				))
+				query_emb = AssignmentService._vector_to_list(crop.embedding) or []
+				for c in candidates:
+					c['similarity'] = AssignmentService._cosine_similarity(
+						query_emb, 
+						AssignmentService._vector_to_list(c['embedding']) or []
+					)
+				candidates.sort(key=lambda x: x['similarity'], reverse=True)
+				results = []
+				for c in candidates[:k]:
+					stud_name = None
+					if c['student_id']:
+						try:
+							stud = Student.objects.only('first_name', 'last_name').get(id=c['student_id'])
+							stud_name = f"{stud.first_name} {stud.last_name}"
+						except Student.DoesNotExist:
+							stud_name = None
+					results.append({
+						'crop_id': c['id'],
+						'student_id': c['student_id'],
+						'student_name': stud_name,
+						'similarity': float(c['similarity']),
+						'distance': None,
+						'crop_image_path': c['crop_image_path'] or '',
+						'is_identified': bool(c['student_id']),
+						'image_id': c['image_id'],
+						'session_id': c['image__session_id'],
+						'session_name': c['image__session__name'],
+					})
+				return results
+
+		return {
+			'identified': get_similar_from_qs(identified_qs, k_identified),
+			'unidentified': get_similar_from_qs(unidentified_qs, k_unidentified),
+		}

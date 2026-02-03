@@ -317,6 +317,45 @@ export interface SuggestAssignmentsResponse {
   }>;
 }
 
+// Enhanced suggestion response for the new manual assignment page
+export interface SimilarFaceEnhanced {
+  crop_id: number;
+  student_id: number | null;
+  student_name: string | null;
+  similarity: number;
+  distance: number | null;
+  crop_image_path: string | null;
+  is_identified: boolean;
+  image_id: number;
+  session_id: number;
+  session_name: string;
+}
+
+export interface EnhancedCropSuggestion {
+  crop_id: number;
+  crop_image_path: string | null;
+  image_id: number;
+  session_id: number;
+  session_name: string;
+  is_identified: boolean;
+  student_id: number | null;
+  student_name: string | null;
+  similar_identified: SimilarFaceEnhanced[];
+  similar_unidentified: SimilarFaceEnhanced[];
+}
+
+export interface SuggestAssignmentsEnhancedResponse {
+  class_id: number;
+  class_name: string;
+  filter: 'all' | 'identified' | 'unidentified';
+  scope: 'class' | 'session' | 'image';
+  k_identified: number;
+  k_unidentified: number;
+  total_crops: number;
+  returned_count: number;
+  suggestions: EnhancedCropSuggestion[];
+}
+
 // Face Crop types
 export interface FaceCrop {
   id: number;
@@ -487,4 +526,71 @@ export interface PaginatedResponse<T> {
 export interface APIError {
   detail?: string;
   [key: string]: string | string[] | undefined;
+}
+
+// Similar faces types for student page
+export interface SimilarFaceCrop {
+  crop_id: number;
+  crop_image_path: string | null;
+  image_id: number;
+  session_id: number;
+  session_name: string;
+  similarity: number;
+  matched_with_student_crop_id: number;
+  student_id?: number;
+  student_name?: string | null;
+  is_identified?: boolean;
+}
+
+export interface StudentMergeSuggestion {
+  student_id: number;
+  student_name: string;
+  student_number: string;
+  profile_picture: string | null;
+  matching_crops_count: number;
+  avg_similarity: number;
+  max_similarity: number;
+  matching_crops: SimilarFaceCrop[];
+}
+
+export interface NoEmbeddingCrop {
+  crop_id: number;
+  crop_image_path: string | null;
+  image_id: number;
+  session_id: number;
+  session_name: string;
+  is_identified: boolean;
+  student_id: number | null;
+  student_name: string | null;
+}
+
+export interface StudentCropInfo {
+  crop_id: number;
+  crop_image_path: string | null;
+  image_id: number;
+  session_id: number;
+  session_name: string;
+  confidence_score: number | null;
+}
+
+export interface SimilarFacesResponse {
+  student: {
+    id: number;
+    full_name: string;
+    student_id: string;
+    profile_picture: string | null;
+  };
+  student_crops: StudentCropInfo[];
+  similar_unidentified: SimilarFaceCrop[];
+  similar_identified: SimilarFaceCrop[];
+  merge_suggestions: StudentMergeSuggestion[];
+  no_embedding_crops: NoEmbeddingCrop[];
+  stats: {
+    student_crops_count: number;
+    similar_unidentified_count: number;
+    similar_identified_count: number;
+    merge_candidates_count: number;
+    no_embedding_count: number;
+  };
+  message?: string;
 }
