@@ -286,11 +286,8 @@ class ClassViewSet(viewsets.ModelViewSet):
         date_from = request.query_params.get('date_from')
         date_to = request.query_params.get('date_to')
         
-        # Filter sessions
+        # Filter sessions - include all sessions (even without images) since manual attendance may exist
         sessions_query = Session.objects.filter(class_session=class_obj)
-        
-        if not include_unprocessed:
-            sessions_query = sessions_query.filter(is_processed=True)
         
         if date_from:
             try:
@@ -472,6 +469,239 @@ class ClassViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response(
                 {'error': f'Failed to generate PDF: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['get'], url_path='export-all-data')
+    def export_all_data(self, request, pk=None):
+        """
+        Export all class data as a ZIP file.
+        
+        This endpoint exports:
+        - students.csv: List of all students
+        - attendance_report.csv: Attendance matrix
+        - attendance_report.pdf: PDF attendance report
+        - sessions/: Folder with session data
+          - {session_name}/images/: Original images
+          - {session_name}/processed/: Processed images
+          - {session_name}/face_crops/: Face crop images
+        
+        Returns:
+        - ZIP file download
+        """
+        import zipfile
+        import io
+        import csv
+        from django.conf import settings
+        from .services import AttendancePDFService
+        
+        class_obj = self.get_object()
+        
+        try:
+            # Create a BytesIO buffer for the ZIP file
+            zip_buffer = io.BytesIO()
+            
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                # 1. Export students.csv
+                students_buffer = io.StringIO()
+                students_writer = csv.writer(students_buffer)
+                students_writer.writerow(['ID', 'First Name', 'Last Name', 'Student ID', 'Email', 'Created At'])
+                
+                for student in class_obj.students.all().order_by('last_name', 'first_name'):
+                    students_writer.writerow([
+                        student.id,
+                        student.first_name,
+                        student.last_name,
+                        student.student_id or '',
+                        student.email or '',
+                        student.created_at.isoformat()
+                    ])
+                
+                zip_file.writestr('students.csv', students_buffer.getvalue())
+                
+                # 2. Export attendance report as CSV (include all sessions, even without images)
+                sessions = list(class_obj.sessions.all().order_by('date', 'created_at'))
+                students = list(class_obj.students.all().order_by('last_name', 'first_name'))
+                
+                attendance_buffer = io.StringIO()
+                attendance_writer = csv.writer(attendance_buffer)
+                
+                # Header row
+                header = ['Student Name', 'Student ID', 'Email', 'Sessions Present', 'Attendance Rate']
+                for session in sessions:
+                    header.append(f"{session.name} ({session.date})")
+                attendance_writer.writerow(header)
+                
+                # Get session IDs for queries
+                session_ids = [s.id for s in sessions]
+                
+                # Data rows
+                for student in students:
+                    # Get sessions attended via face detection
+                    attended_session_ids = set(
+                        Session.objects.filter(
+                            id__in=session_ids,
+                            images__face_crops__student=student
+                        ).distinct().values_list('id', flat=True)
+                    )
+                    
+                    # Get manual attendance records
+                    manual_attendance_dict = {}
+                    manual_records = ManualAttendance.objects.filter(
+                        student=student,
+                        session_id__in=session_ids
+                    )
+                    for record in manual_records:
+                        manual_attendance_dict[record.session_id] = record.is_present
+                    
+                    row = [
+                        student.full_name,
+                        student.student_id or '',
+                        student.email or '',
+                    ]
+                    
+                    present_count = 0
+                    session_attendance = []
+                    for session in sessions:
+                        manual_status = manual_attendance_dict.get(session.id)
+                        if manual_status is not None:
+                            is_present = manual_status
+                        else:
+                            is_present = session.id in attended_session_ids
+                        
+                        if is_present:
+                            present_count += 1
+                        session_attendance.append('1' if is_present else '0')
+                    
+                    total_sessions = len(sessions)
+                    attendance_rate = (present_count / total_sessions * 100) if total_sessions > 0 else 0
+                    
+                    row.append(str(present_count))
+                    row.append(f"{attendance_rate:.1f}%")
+                    row.extend(session_attendance)
+                    
+                    attendance_writer.writerow(row)
+                
+                zip_file.writestr('attendance_report.csv', attendance_buffer.getvalue())
+                
+                # 3. Export attendance PDF
+                try:
+                    pdf_service = AttendancePDFService(class_obj)
+                    pdf_buffer = pdf_service.generate_report()
+                    zip_file.writestr('attendance_report.pdf', pdf_buffer.getvalue())
+                except Exception as e:
+                    # If PDF generation fails, add a note but continue
+                    zip_file.writestr('attendance_report_error.txt', f'PDF generation failed: {str(e)}')
+                
+                # 4. Export session data (images and face crops)
+                for session in sessions:
+                    session_folder = f"sessions/{session.name.replace('/', '_').replace(' ', '_')}"
+                    
+                    # Export session info
+                    session_info = f"""Session: {session.name}
+Date: {session.date}
+Start Time: {session.start_time or 'N/A'}
+End Time: {session.end_time or 'N/A'}
+Description: {session.description or 'N/A'}
+Is Processed: {session.is_processed}
+Created: {session.created_at.isoformat()}
+"""
+                    zip_file.writestr(f"{session_folder}/session_info.txt", session_info)
+                    
+                    # Export images
+                    for image in session.images.all():
+                        # Original image
+                        if image.original_image_path:
+                            try:
+                                image_path = image.original_image_path.path
+                                if os.path.exists(image_path):
+                                    with open(image_path, 'rb') as f:
+                                        filename = os.path.basename(image_path)
+                                        zip_file.writestr(
+                                            f"{session_folder}/images/{filename}",
+                                            f.read()
+                                        )
+                            except Exception:
+                                pass
+                        
+                        # Processed image
+                        if image.processed_image_path:
+                            try:
+                                processed_path = image.processed_image_path.path
+                                if os.path.exists(processed_path):
+                                    with open(processed_path, 'rb') as f:
+                                        filename = os.path.basename(processed_path)
+                                        zip_file.writestr(
+                                            f"{session_folder}/processed/{filename}",
+                                            f.read()
+                                        )
+                            except Exception:
+                                pass
+                        
+                        # Face crops from this image
+                        for crop in image.face_crops.all():
+                            if crop.crop_image_path:
+                                try:
+                                    crop_path = crop.crop_image_path.path
+                                    if os.path.exists(crop_path):
+                                        with open(crop_path, 'rb') as f:
+                                            student_name = crop.student.full_name if crop.student else 'unidentified'
+                                            student_name = student_name.replace('/', '_').replace(' ', '_')
+                                            filename = os.path.basename(crop_path)
+                                            zip_file.writestr(
+                                                f"{session_folder}/face_crops/{student_name}_{filename}",
+                                                f.read()
+                                            )
+                                except Exception:
+                                    pass
+                
+                # 5. Export class info
+                class_info = f"""Class: {class_obj.name}
+Description: {class_obj.description or 'N/A'}
+Notes: {class_obj.notes or 'N/A'}
+Owner: {class_obj.owner.username}
+Is Active: {class_obj.is_active}
+Created: {class_obj.created_at.isoformat()}
+Updated: {class_obj.updated_at.isoformat()}
+
+Statistics:
+- Total Students: {class_obj.students.count()}
+- Total Sessions: {class_obj.sessions.count()}
+- Total Images: {Image.objects.filter(session__class_session=class_obj).count()}
+- Total Face Crops: {FaceCrop.objects.filter(image__session__class_session=class_obj).count()}
+"""
+                zip_file.writestr('class_info.txt', class_info)
+                
+                # 6. Export student profile pictures
+                for student in class_obj.students.all():
+                    if student.profile_picture:
+                        try:
+                            profile_path = student.profile_picture.path
+                            if os.path.exists(profile_path):
+                                with open(profile_path, 'rb') as f:
+                                    ext = os.path.splitext(profile_path)[1]
+                                    student_name = f"{student.last_name}_{student.first_name}".replace(' ', '_')
+                                    zip_file.writestr(
+                                        f"student_profiles/{student_name}{ext}",
+                                        f.read()
+                                    )
+                        except Exception:
+                            pass
+            
+            # Create the HTTP response
+            zip_buffer.seek(0)
+            response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
+            filename = f"{class_obj.name.replace(' ', '_')}_export.zip"
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            
+            return response
+            
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"Export error: {error_trace}")
+            return Response(
+                {'error': f'Failed to export class data: {str(e)}', 'trace': error_trace},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -2917,6 +3147,241 @@ class SessionViewSet(viewsets.ModelViewSet):
             'manual_attendance': serializer.data
         })
     
+    @action(detail=True, methods=['post'], url_path='import-presence', parser_classes=[MultiPartParser, FormParser])
+    def import_presence(self, request, pk=None):
+        """
+        Import presence data from a CSV or TXT file.
+        
+        The file should contain student names (one per line or comma-separated).
+        The endpoint will:
+        1. Parse the file to extract names
+        2. Match names against students in the class using fuzzy matching
+        3. Return matched results for user review
+        
+        File Format:
+        - TXT: One name per line
+        - CSV: Names in first column (optionally with header)
+        
+        Body params (multipart/form-data):
+        - file: The CSV or TXT file containing names
+        - similarity_threshold: Minimum similarity for name matching (0.0-1.0, default: 0.6)
+        
+        Returns:
+        - matches: List of {imported_name, matched_student_id, matched_student_name, similarity}
+        - unmatched: List of names that couldn't be matched
+        - total_imported: Total names from file
+        """
+        from difflib import SequenceMatcher
+        import csv
+        import io
+        
+        session_obj = self.get_object()
+        
+        # Validate file upload
+        if 'file' not in request.FILES:
+            return Response(
+                {'error': 'No file uploaded. Please provide a file parameter.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        uploaded_file = request.FILES['file']
+        similarity_threshold = float(request.data.get('similarity_threshold', 0.6))
+        
+        # Validate file extension
+        filename = uploaded_file.name.lower()
+        if not (filename.endswith('.txt') or filename.endswith('.csv')):
+            return Response(
+                {'error': 'Invalid file format. Please upload a .txt or .csv file.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Read file content
+        try:
+            content = uploaded_file.read().decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                uploaded_file.seek(0)
+                content = uploaded_file.read().decode('latin-1')
+            except:
+                return Response(
+                    {'error': 'Unable to read file. Please ensure it\'s a valid text file.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Parse names from file
+        imported_names = []
+        
+        if filename.endswith('.csv'):
+            # Parse CSV
+            reader = csv.reader(io.StringIO(content))
+            for row in reader:
+                if row:
+                    # Take the first column as name
+                    name = row[0].strip()
+                    if name and not name.lower() in ['name', 'student', 'student name', 'full name']:
+                        imported_names.append(name)
+        else:
+            # Parse TXT - one name per line
+            for line in content.split('\n'):
+                name = line.strip()
+                if name:
+                    imported_names.append(name)
+        
+        if not imported_names:
+            return Response(
+                {'error': 'No names found in the uploaded file.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get all students in the class
+        students = Student.objects.filter(
+            class_enrolled=session_obj.class_session
+        ).order_by('last_name', 'first_name')
+        
+        def normalize_name(name):
+            """Normalize name for comparison."""
+            return ' '.join(name.lower().split())
+        
+        def calculate_similarity(name1, name2):
+            """Calculate similarity between two names."""
+            n1 = normalize_name(name1)
+            n2 = normalize_name(name2)
+            
+            # Direct match
+            if n1 == n2:
+                return 1.0
+            
+            # Check if one name contains the other (for partial matches)
+            if n1 in n2 or n2 in n1:
+                return 0.85
+            
+            # Use SequenceMatcher for fuzzy matching
+            ratio = SequenceMatcher(None, n1, n2).ratio()
+            
+            # Also try matching individual parts (first/last name swap)
+            parts1 = n1.split()
+            parts2 = n2.split()
+            
+            if len(parts1) >= 2 and len(parts2) >= 2:
+                # Try swapped order
+                swapped_n1 = ' '.join(reversed(parts1))
+                swapped_ratio = SequenceMatcher(None, swapped_n1, n2).ratio()
+                ratio = max(ratio, swapped_ratio)
+            
+            return ratio
+        
+        # Match imported names to students
+        matches = []
+        unmatched = []
+        
+        for imported_name in imported_names:
+            best_match = None
+            best_similarity = 0
+            
+            for student in students:
+                similarity = calculate_similarity(imported_name, student.full_name)
+                
+                # Also check against student_id if present
+                if student.student_id:
+                    id_similarity = calculate_similarity(imported_name, student.student_id)
+                    similarity = max(similarity, id_similarity)
+                
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = student
+            
+            if best_match and best_similarity >= similarity_threshold:
+                matches.append({
+                    'imported_name': imported_name,
+                    'matched_student_id': best_match.id,
+                    'matched_student_name': best_match.full_name,
+                    'student_number': best_match.student_id,
+                    'profile_picture': best_match.profile_picture.url if best_match.profile_picture else None,
+                    'similarity': round(best_similarity, 3)
+                })
+            else:
+                unmatched.append({
+                    'imported_name': imported_name,
+                    'best_match_name': best_match.full_name if best_match else None,
+                    'best_match_id': best_match.id if best_match else None,
+                    'best_similarity': round(best_similarity, 3) if best_match else 0
+                })
+        
+        return Response({
+            'session_id': session_obj.id,
+            'session_name': session_obj.name,
+            'total_imported': len(imported_names),
+            'total_matched': len(matches),
+            'total_unmatched': len(unmatched),
+            'matches': matches,
+            'unmatched': unmatched
+        })
+    
+    @action(detail=True, methods=['post'], url_path='apply-imported-presence')
+    def apply_imported_presence(self, request, pk=None):
+        """
+        Apply the imported presence data by marking students as present.
+        
+        This endpoint takes the list of student IDs to mark as present
+        and creates manual attendance records for them.
+        
+        Body params:
+        - student_ids: List of student IDs to mark as present
+        
+        Returns:
+        - marked_count: Number of students marked as present
+        - already_marked_count: Number of students already marked
+        """
+        from .models import ManualAttendance
+        
+        session_obj = self.get_object()
+        
+        student_ids = request.data.get('student_ids', [])
+        if not student_ids:
+            return Response(
+                {'error': 'No student IDs provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate all students belong to the class
+        students = Student.objects.filter(
+            id__in=student_ids,
+            class_enrolled=session_obj.class_session
+        )
+        
+        if students.count() != len(student_ids):
+            return Response(
+                {'error': 'Some student IDs are invalid or don\'t belong to this class'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        marked_count = 0
+        already_marked_count = 0
+        
+        for student in students:
+            _, created = ManualAttendance.objects.update_or_create(
+                student=student,
+                session=session_obj,
+                defaults={
+                    'is_present': True,
+                    'marked_by': request.user,
+                    'note': 'Imported from file'
+                }
+            )
+            if created:
+                marked_count += 1
+            else:
+                already_marked_count += 1
+        
+        return Response({
+            'status': 'success',
+            'session_id': session_obj.id,
+            'session_name': session_obj.name,
+            'marked_count': marked_count,
+            'already_marked_count': already_marked_count,
+            'message': f'Successfully marked {marked_count} students as present'
+        })
+
     @action(detail=True, methods=['post'], url_path='clear-session')
     def clear_session(self, request, pk=None):
         """

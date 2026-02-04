@@ -45,14 +45,17 @@ class StudentSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     class_name = serializers.ReadOnlyField(source='class_enrolled.name')
     profile_picture = serializers.SerializerMethodField()
+    attended_sessions = serializers.SerializerMethodField()
+    total_sessions = serializers.SerializerMethodField()
     
     class Meta:
         model = Student
         fields = [
             'id', 'class_enrolled', 'class_name', 'first_name', 
-            'last_name', 'full_name', 'student_id', 'email', 'profile_picture', 'created_at'
+            'last_name', 'full_name', 'student_id', 'email', 'profile_picture', 
+            'attended_sessions', 'total_sessions', 'created_at'
         ]
-        read_only_fields = ['id', 'created_at', 'full_name', 'class_name', 'profile_picture']
+        read_only_fields = ['id', 'created_at', 'full_name', 'class_name', 'profile_picture', 'attended_sessions', 'total_sessions']
     
     def get_profile_picture(self, obj):
         """Return the URL for the profile picture."""
@@ -62,6 +65,38 @@ class StudentSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.profile_picture.url)
             return obj.profile_picture.url
         return None
+    
+    def get_attended_sessions(self, obj):
+        """Calculate how many sessions the student attended."""
+        from .models import Session, ManualAttendance
+        
+        # Get all sessions in the class
+        sessions = Session.objects.filter(class_session=obj.class_enrolled)
+        
+        attended_count = 0
+        for session in sessions:
+            # Check if detected via face recognition
+            is_detected = obj.face_crops.filter(image__session=session).exists()
+            
+            # Check manual attendance
+            manual_record = ManualAttendance.objects.filter(
+                student=obj,
+                session=session
+            ).first()
+            
+            # If manual record exists, use that; otherwise use detection
+            if manual_record:
+                if manual_record.is_present:
+                    attended_count += 1
+            elif is_detected:
+                attended_count += 1
+        
+        return attended_count
+    
+    def get_total_sessions(self, obj):
+        """Get total number of sessions in the class."""
+        from .models import Session
+        return Session.objects.filter(class_session=obj.class_enrolled).count()
     
     def validate_class_enrolled(self, value):
         """
